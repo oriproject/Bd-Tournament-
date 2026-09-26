@@ -1,0 +1,6 @@
+{
+  "name": "Bd Tournament",
+  "description": "Esports tournament platform with live Free Fire matches, room details, leaderboard results, and bKash/Nagad/Rocket wallet integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

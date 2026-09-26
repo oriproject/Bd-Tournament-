@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">Bd Tournament</string>
+    <string name="welcome_back">Welcome back!</string>
+    <string name="sign_in">Sign In</string>
+    <string name="sign_up">Sign Up</string>
+    <string name="tab_home">Home</string>
+    <string name="tab_matches">Matches</string>
+    <string name="tab_wallet">Wallet</string>
+    <string name="tab_result">Result</string>
+    <string name="tab_profile">Profile</string>
+    <string name="free_fire">FREE FIRE</string>
+    <string name="my_wallet">My Wallet</string>
+    <string name="add_money">Add Money</string>
+    <string name="withdraw">Withdraw</string>
+    <string name="edit_profile">Edit Profile</string>
+    <string name="refer_and_earn">Refer &amp; Earn</string>
+    <string name="all_transactions">All Transactions</string>
+    <string name="notifications">Notifications</string>
+    <string name="logout">Logout</string>
+</resources>
