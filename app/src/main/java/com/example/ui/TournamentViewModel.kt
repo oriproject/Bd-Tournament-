@@ -143,6 +143,16 @@ class TournamentViewModel(
                 _currentTimeMillis.value = System.currentTimeMillis()
             }
         }
+        // Live periodic sync with Firebase Realtime Database so Admin Panel updates reflect automatically
+        viewModelScope.launch {
+            while (true) {
+                delay(8000L)
+                try {
+                    repository.syncLiveFromFirebase()
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 
     fun toggleAuthMode(mode: String) {
@@ -358,16 +368,6 @@ class TournamentViewModel(
         }
     }
 
-    fun loginDemoAccount() {
-        viewModelScope.launch {
-            _isLoading.value = true
-            repository.loginDemoPlayer()
-            _isLoading.value = false
-            _activeTab.value = MainTab.HOME
-            _subScreen.value = SubScreen.None
-        }
-    }
-
     fun loginWithGoogle(googleIdToken: String?, email: String, displayName: String, photoUrl: String = "") {
         if (email.isBlank()) {
             _alertMessage.value = AlertMessage(AlertType.ERROR, "Error", "Please select or enter a valid Google email")
@@ -407,7 +407,7 @@ class TournamentViewModel(
         }
     }
 
-    fun verifyAutoPay(trxId: String) {
+    fun verifyAutoPay(trxId: String, amountStr: String = "100") {
         val user = currentUser.value ?: return
         if (trxId.isBlank()) {
             _alertMessage.value = AlertMessage(
@@ -417,9 +417,10 @@ class TournamentViewModel(
             )
             return
         }
+        val enteredAmount = amountStr.trim().toDoubleOrNull()?.takeIf { it > 0.0 } ?: 100.0
         viewModelScope.launch {
             _isLoading.value = true
-            val res = repository.verifyAndAddMoney(user, _currentPayMethod.value, trxId)
+            val res = repository.verifyAndAddMoney(user, _currentPayMethod.value, trxId, enteredAmount)
             _isLoading.value = false
             if (res.isSuccess) {
                 val added = res.getOrThrow()
@@ -481,7 +482,7 @@ class TournamentViewModel(
         }
         viewModelScope.launch {
             _isLoading.value = true
-            repository.updateProfileDetails(user, username.trim(), phone.trim())
+            repository.updateProfileDetails(user, username.trim(), phone.trim(), newPass.trim())
             _isLoading.value = false
             _alertMessage.value = AlertMessage(AlertType.SUCCESS, "Success", "Profile Updated")
         }

@@ -418,11 +418,12 @@ fun AddMoneyScreen(
     currentMethod: String,
     appSettings: AppSettingsData,
     onSelectMethod: (String) -> Unit,
-    onVerify: (String) -> Unit,
+    onVerify: (String, String) -> Unit,
     onCopySuccess: () -> Unit,
     onBack: () -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
+    var amountInput by remember(currentMethod) { mutableStateOf("") }
     var trxId by remember(currentMethod) { mutableStateOf("") }
 
     val (boxColor, inputBgColor, dialCode, methodLabel, recipientNumber) = when (currentMethod) {
@@ -488,7 +489,7 @@ fun AddMoneyScreen(
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "ট্রানজেকশন আইডি দিন",
+                        text = "টাকার পরিমাণ এবং ট্রানজেকশন আইডি দিন",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
@@ -497,6 +498,44 @@ fun AddMoneyScreen(
                     )
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    // Amount Input Box
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(inputBgColor)
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (amountInput.isEmpty()) {
+                            Text(
+                                text = "টাকার পরিমাণ লিখুন (যেমন: 100)",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        BasicTextField(
+                            value = amountInput,
+                            onValueChange = { amountInput = it },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            textStyle = TextStyle(
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            cursorBrush = SolidColor(Color.White),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("add_money_amount_input")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Transaction ID Input Box
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -507,7 +546,7 @@ fun AddMoneyScreen(
                     ) {
                         if (trxId.isEmpty()) {
                             Text(
-                                text = "ট্রানজেকশন আইডি দিন",
+                                text = "ট্রানজেকশন আইডি দিন (TrxID)",
                                 color = Color.White.copy(alpha = 0.7f),
                                 fontSize = 14.sp,
                                 textAlign = TextAlign.Center
@@ -583,14 +622,14 @@ fun AddMoneyScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
                     BulletInstruction("নিশ্চিত করতে এখন আপনার $methodLabel মোবাইল মেনু পিন লিখুন।")
-                    BulletInstruction("এখন উপরের বক্সে আপনার Transaction ID এবং Amount দিন আর নিচের VERIFY বাটনে ক্লিক করুন।")
+                    BulletInstruction("এখন উপরের বক্সে আপনার Amount এবং Transaction ID দিন আর নিচের VERIFY বাটনে ক্লিক করুন।")
                 }
             }
 
             Spacer(modifier = Modifier.height(15.dp))
 
             Button(
-                onClick = { onVerify(trxId) },
+                onClick = { onVerify(trxId, amountInput) },
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = boxColor),
                 modifier = Modifier

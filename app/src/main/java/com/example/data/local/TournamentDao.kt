@@ -14,11 +14,17 @@ interface TournamentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategories(categories: List<CategoryEntity>)
 
+    @Query("DELETE FROM categories")
+    suspend fun clearCategories()
+
     @Query("SELECT * FROM matches ORDER BY timestamp ASC")
     fun getAllMatches(): Flow<List<MatchEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMatches(matches: List<MatchEntity>)
+
+    @Query("DELETE FROM matches")
+    suspend fun clearMatches()
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMatch(match: MatchEntity)
@@ -28,6 +34,9 @@ interface TournamentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertParticipants(participants: List<ParticipantEntity>)
+
+    @Query("DELETE FROM participants")
+    suspend fun clearParticipants()
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertParticipant(participant: ParticipantEntity)

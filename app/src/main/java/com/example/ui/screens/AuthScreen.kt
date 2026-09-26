@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.accounts.AccountManager
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -113,34 +117,44 @@ fun AuthScreen(
 
     var showGoogleChooserDialog by remember { mutableStateOf(false) }
 
-    fun triggerGoogleSignIn() {
-        coroutineScope.launch {
-            try {
-                val credentialManager = CredentialManager.create(context)
-                val googleIdOption = GetGoogleIdOption.Builder()
-                    .setFilterByAuthorizedAccounts(false)
-                    .setServerClientId("197847744883-web.apps.googleusercontent.com")
-                    .setAutoSelectEnabled(false)
-                    .build()
-                val request = GetCredentialRequest.Builder()
-                    .addCredentialOption(googleIdOption)
-                    .build()
-                val result = credentialManager.getCredential(context = context, request = request)
-                val credential = result.credential
-                if (credential is CustomCredential &&
-                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                ) {
-                    val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
-                    val email = googleIdTokenCredential.id
-                    val displayName = googleIdTokenCredential.displayName ?: email.substringBefore("@")
-                    val photoUrl = googleIdTokenCredential.profilePictureUri?.toString() ?: ""
-                    onGoogleLogin(googleIdTokenCredential.idToken, email, displayName, photoUrl)
-                } else {
-                    showGoogleChooserDialog = true
-                }
-            } catch (_: Exception) {
-                showGoogleChooserDialog = true
+    val googleAccountPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val selectedEmail = result.data
+                ?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+                ?.trim()
+                .orEmpty()
+            if (selectedEmail.isNotBlank()) {
+                val derivedName = selectedEmail
+                    .substringBefore("@")
+                    .replace(Regex("[._-]+"), " ")
+                    .trim()
+                    .split(" ")
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ") { word ->
+                        word.replaceFirstChar { c -> c.uppercase() }
+                    }
+                    .ifBlank { selectedEmail.substringBefore("@") }
+                onGoogleLogin(null, selectedEmail, derivedName, "")
             }
+        }
+    }
+
+    fun triggerGoogleSignIn() {
+        try {
+            val intent = AccountManager.newChooseAccountIntent(
+                null,
+                null,
+                arrayOf("com.google"),
+                null,
+                null,
+                null,
+                null
+            )
+            googleAccountPickerLauncher.launch(intent)
+        } catch (_: Exception) {
+            showGoogleChooserDialog = true
         }
     }
 
@@ -557,7 +571,6 @@ private fun GoogleAccountChooserDialog(
     onDismiss: () -> Unit,
     onSelectAccount: (String, String) -> Unit
 ) {
-    var useCustomAccount by remember { mutableStateOf(false) }
     var customName by remember { mutableStateOf("") }
     var customEmail by remember { mutableStateOf("") }
 
@@ -584,139 +597,67 @@ private fun GoogleAccountChooserDialog(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Choose an account to continue to Bd Tournament",
+                    text = "Enter your Google account to continue to Bd Tournament",
                     fontSize = 13.sp,
                     color = TextMuted,
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(18.dp))
 
-                if (!useCustomAccount) {
-                    Card(
-                        shape = RoundedCornerShape(10.dp),
-                        colors = CardDefaults.cardColors(containerColor = SurfaceElevatedDark),
-                        border = BorderStroke(1.dp, CardBorderDark),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onSelectAccount("arnobbd028@gmail.com", "Arnob BD")
-                            }
-                            .testTag("google_account_item_1")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(EsportsOrange),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("A", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 18.sp)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Arnob BD",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = TextWhite
-                                )
-                                Text(
-                                    text = "arnobbd028@gmail.com",
-                                    fontSize = 12.sp,
-                                    color = TextMuted
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Card(
-                        shape = RoundedCornerShape(10.dp),
-                        colors = CardDefaults.cardColors(containerColor = SurfaceElevatedDark),
-                        border = BorderStroke(1.dp, CardBorderDark),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { useCustomAccount = true }
-                            .testTag("google_use_another_account")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AccountCircle,
-                                contentDescription = null,
-                                tint = EsportsOrange,
-                                modifier = Modifier.size(36.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = "Use another Google account",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.sp,
-                                color = TextWhite
-                            )
-                        }
-                    }
-                } else {
-                    OutlinedTextField(
-                        value = customName,
-                        onValueChange = { customName = it },
-                        placeholder = { Text("Your Name", fontSize = 14.sp, color = TextMuted) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = EsportsOrange,
-                            unfocusedBorderColor = CardBorderDark,
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("google_custom_name_input")
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = customEmail,
-                        onValueChange = { customEmail = it },
-                        placeholder = { Text("yourname@gmail.com", fontSize = 14.sp, color = TextMuted) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = EsportsOrange,
-                            unfocusedBorderColor = CardBorderDark,
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("google_custom_email_input")
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = {
-                            val email = customEmail.trim().ifBlank { "player@gmail.com" }
+                OutlinedTextField(
+                    value = customName,
+                    onValueChange = { customName = it },
+                    placeholder = { Text("Your Name", fontSize = 14.sp, color = TextMuted) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = EsportsOrange,
+                        unfocusedBorderColor = CardBorderDark,
+                        focusedTextColor = TextWhite,
+                        unfocusedTextColor = TextWhite
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("google_custom_name_input")
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = customEmail,
+                    onValueChange = { customEmail = it },
+                    placeholder = { Text("yourname@gmail.com", fontSize = 14.sp, color = TextMuted) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = EsportsOrange,
+                        unfocusedBorderColor = CardBorderDark,
+                        focusedTextColor = TextWhite,
+                        unfocusedTextColor = TextWhite
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("google_custom_email_input")
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        val email = customEmail.trim()
+                        if (email.isNotBlank()) {
                             val name = customName.trim().ifBlank { email.substringBefore("@") }
                             onSelectAccount(email, name)
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = EsportsOrange,
-                            contentColor = Color.Black
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("google_custom_continue_btn")
-                    ) {
-                        Text("Continue", fontWeight = FontWeight.Black)
-                    }
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = EsportsOrange,
+                        contentColor = Color.Black
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("google_custom_continue_btn")
+                ) {
+                    Text("Continue", fontWeight = FontWeight.Black)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))

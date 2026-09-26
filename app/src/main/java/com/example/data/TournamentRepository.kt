@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.first
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.UUID
 
 class TournamentRepository(
     private val dao: TournamentDao,
@@ -44,12 +43,42 @@ class TournamentRepository(
         dao.getTransactionsForUser(uid)
 
     suspend fun initializeAndSync() {
-        // 1. Seed rich fallback tournament data if local DB is empty so app is never blank
+        // 1. Seed rich fallback tournament data locally if local DB is empty
         if (dao.getAllCategories().first().isEmpty()) {
             seedDefaultData()
         }
 
-        // 2. Sync live data from Firebase Realtime Database (bd-tournament-3)
+        // 2. If a user is already logged in locally, ensure they are registered & synced in Firebase Auth + RTDB
+        val localUser = dao.getActiveUser().first()
+        var activeToken: String? = null
+        if (localUser != null) {
+            val syncedUser = remote.ensureUserSyncedWithFirebase(localUser)
+            if (syncedUser != localUser) {
+                dao.clearUsers()
+                dao.insertUser(syncedUser)
+            }
+            activeToken = syncedUser.idToken
+            val remoteTxs = remote.fetchUserTransactions(syncedUser.uid, syncedUser.idToken)
+            if (remoteTxs.isNotEmpty()) {
+                dao.insertTransactions(remoteTxs)
+            }
+        }
+
+        // 3. Seed Firebase Realtime Database (bd-tournament-3) if any root node is empty so Admin Panel has full structure
+        remote.seedInitialDatabaseIfNeeded(
+            defaultSettings = _appSettings.value,
+            defaultCategories = dao.getAllCategories().first(),
+            defaultMatches = dao.getAllMatches().first(),
+            defaultParticipants = dao.getAllParticipants().first(),
+            defaultNotifications = dao.getAllNotifications().first(),
+            authToken = activeToken
+        )
+
+        // 4. Pull live data from Firebase Realtime Database
+        syncLiveFromFirebase()
+    }
+
+    suspend fun syncLiveFromFirebase() {
         remote.fetchAppSettings()?.let { remoteSettings ->
             val mergedBanners = if (remoteSettings.banners.isNotEmpty()) {
                 remoteSettings.banners
@@ -61,22 +90,43 @@ class TournamentRepository(
 
         val remoteCats = remote.fetchCategories()
         if (remoteCats.isNotEmpty()) {
+            dao.clearCategories()
             dao.insertCategories(remoteCats)
         }
 
         val remoteMatches = remote.fetchMatches()
         if (remoteMatches.isNotEmpty()) {
+            dao.clearMatches()
             dao.insertMatches(remoteMatches)
         }
 
         val remoteParts = remote.fetchParticipants()
         if (remoteParts.isNotEmpty()) {
+            dao.clearParticipants()
             dao.insertParticipants(remoteParts)
         }
 
         val remoteNotifs = remote.fetchNotifications()
         if (remoteNotifs.isNotEmpty()) {
             dao.insertNotifications(remoteNotifs)
+        }
+
+        // Sync active user's balance & transactions from Firebase (in case updated by Admin Panel)
+        val curUser = dao.getActiveUser().first()
+        if (curUser != null) {
+            val remoteUser = remote.fetchRemoteUser(curUser.uid, curUser.idToken)
+            if (remoteUser != null) {
+                dao.insertUser(curUser.copy(
+                    username = remoteUser.username.ifBlank { curUser.username },
+                    phone = remoteUser.phone.ifBlank { curUser.phone },
+                    deposit = remoteUser.deposit,
+                    winning = remoteUser.winning
+                ))
+            }
+            val remoteTxs = remote.fetchUserTransactions(curUser.uid, curUser.idToken)
+            if (remoteTxs.isNotEmpty()) {
+                dao.insertTransactions(remoteTxs)
+            }
         }
     }
 
@@ -280,12 +330,13 @@ class TournamentRepository(
         val remoteRes = remote.signInEmail(email.trim(), pass)
         return if (remoteRes.isSuccess) {
             val user = remoteRes.getOrThrow()
+            dao.clearUsers()
             dao.insertUser(user)
             val remoteTxs = remote.fetchUserTransactions(user.uid, user.idToken)
             if (remoteTxs.isNotEmpty()) dao.insertTransactions(remoteTxs)
+            initializeAndSync()
             Result.success(user)
         } else {
-            // Check if local user exists or create a local authenticated session if Firebase rejects unknown test account
             val errMsg = remoteRes.exceptionOrNull()?.message ?: "Authentication error"
             Result.failure(Exception(errMsg))
         }
@@ -295,68 +346,15 @@ class TournamentRepository(
         val remoteRes = remote.signUpEmail(username.trim(), email.trim(), phone.trim(), pass)
         return if (remoteRes.isSuccess) {
             val user = remoteRes.getOrThrow()
+            dao.clearUsers()
             dao.insertUser(user)
+            initializeAndSync()
             Result.success(user)
         } else {
-            // If Firebase Auth returns an error (or if offline), provide clear error or create local account if network error
             val ex = remoteRes.exceptionOrNull()
             val msg = ex?.message ?: "Registration failed"
-            if (msg.contains("Unable to resolve host", ignoreCase = true) || msg.contains("timeout", ignoreCase = true)) {
-                val localUser = UserEntity(
-                    uid = "user_${UUID.randomUUID().toString().take(8)}",
-                    username = username.trim(),
-                    email = email.trim(),
-                    phone = phone.trim(),
-                    deposit = 50.0,
-                    winning = 0.0
-                )
-                dao.insertUser(localUser)
-                Result.success(localUser)
-            } else {
-                Result.failure(Exception(msg))
-            }
+            Result.failure(Exception(msg))
         }
-    }
-
-    suspend fun loginDemoPlayer(): UserEntity {
-        val demoUser = UserEntity(
-            uid = "demo_player_bd",
-            username = "Bd Tournament Gamer",
-            email = "player@bdtournament.com",
-            phone = "01712345678",
-            deposit = 120.0,
-            winning = 250.0
-        )
-        dao.insertUser(demoUser)
-        val existingTx = dao.getTransactionsForUser(demoUser.uid).first()
-        if (existingTx.isEmpty()) {
-            val df = SimpleDateFormat("dd/MM/yyyy, hh:mm a", Locale.getDefault())
-            dao.insertTransactions(
-                listOf(
-                    TransactionEntity(
-                        id = "TX9821",
-                        uid = demoUser.uid,
-                        type = "Deposit (Auto)",
-                        amount = 150.0,
-                        method = "bKash",
-                        status = "Success",
-                        txId = "TX9821",
-                        date = df.format(Date(System.currentTimeMillis() - 7200_000L))
-                    ),
-                    TransactionEntity(
-                        id = "TX9845",
-                        uid = demoUser.uid,
-                        type = "Match Win Prize",
-                        amount = 250.0,
-                        method = "Wallet",
-                        status = "Success",
-                        txId = "TX9845",
-                        date = df.format(Date(System.currentTimeMillis() - 3600_000L))
-                    )
-                )
-            )
-        }
-        return demoUser
     }
 
     suspend fun loginWithGoogleAccount(
@@ -368,22 +366,15 @@ class TournamentRepository(
         val res = remote.signInWithGoogleAccount(googleIdToken, email.trim(), displayName.trim(), photoUrl)
         return if (res.isSuccess) {
             val user = res.getOrThrow()
+            dao.clearUsers()
             dao.insertUser(user)
             val remoteTxs = remote.fetchUserTransactions(user.uid, user.idToken)
             if (remoteTxs.isNotEmpty()) dao.insertTransactions(remoteTxs)
+            initializeAndSync()
             Result.success(user)
         } else {
-            val fallbackUser = UserEntity(
-                uid = "google_" + email.trim().lowercase().replace(Regex("[^a-z0-9]"), "_"),
-                username = displayName.ifBlank { email.substringBefore("@") },
-                email = email.trim(),
-                phone = "",
-                photoUrl = photoUrl,
-                deposit = 0.0,
-                winning = 0.0
-            )
-            dao.insertUser(fallbackUser)
-            Result.success(fallbackUser)
+            val errMsg = res.exceptionOrNull()?.message ?: "Google Sign-In failed"
+            Result.failure(Exception(errMsg))
         }
     }
 
@@ -396,14 +387,20 @@ class TournamentRepository(
         match: MatchEntity,
         playerIgns: List<String>
     ): Result<Unit> {
+        val syncedUser = remote.ensureUserSyncedWithFirebase(user)
+        if (syncedUser != user) {
+            dao.clearUsers()
+            dao.insertUser(syncedUser)
+        }
+
         val count = playerIgns.size
         val totalCost = (match.entry * count).toDouble()
-        if (user.deposit + user.winning < totalCost) {
+        if (syncedUser.deposit + syncedUser.winning < totalCost) {
             return Result.failure(Exception("Insufficient Balance! Required: ৳${totalCost.toInt()}"))
         }
 
-        var d = user.deposit
-        var w = user.winning
+        var d = syncedUser.deposit
+        var w = syncedUser.winning
         var rem = totalCost
         if (d >= rem) {
             d -= rem
@@ -413,15 +410,15 @@ class TournamentRepository(
             w -= rem
         }
 
-        val updatedUser = user.copy(deposit = d, winning = w)
+        val updatedUser = syncedUser.copy(deposit = d, winning = w)
         dao.insertUser(updatedUser)
 
         val newParticipants = playerIgns.mapIndexed { index, ign ->
             ParticipantEntity(
-                id = "${match.dbKey}_${user.uid}_${System.currentTimeMillis()}_$index",
+                id = "${match.dbKey}_${syncedUser.uid}_${System.currentTimeMillis()}_$index",
                 matchKey = match.dbKey,
                 ign = ign,
-                joinedBy = user.uid,
+                joinedBy = syncedUser.uid,
                 kills = 0,
                 win = 0
             )
@@ -435,8 +432,8 @@ class TournamentRepository(
         val txKey = "JOIN${System.currentTimeMillis().toString().takeLast(6)}"
         val tx = TransactionEntity(
             id = txKey,
-            uid = user.uid,
-            type = "Match Join",
+            uid = syncedUser.uid,
+            type = "Match Join (${match.title})",
             amount = totalCost,
             method = "Wallet",
             status = "Success",
@@ -445,36 +442,55 @@ class TournamentRepository(
         )
         dao.insertTransaction(tx)
 
-        // Sync to Firebase RTDB in background
-        remote.syncUserBalance(user.uid, d, w, user.idToken)
-        remote.pushParticipantAndCount(match.dbKey, playerIgns, user.uid, newJoinedCount, user.idToken)
-        remote.pushTransaction(user.uid, tx, user.idToken)
+        // Sync to Firebase RTDB
+        remote.syncUserBalance(syncedUser.uid, d, w, syncedUser.idToken)
+        remote.pushParticipantAndCount(match.dbKey, playerIgns, syncedUser.uid, newJoinedCount, syncedUser.idToken)
+        remote.pushTransaction(updatedUser, tx)
 
         return Result.success(Unit)
     }
 
-    suspend fun verifyAndAddMoney(user: UserEntity, method: String, trxId: String): Result<Double> {
-        val res = remote.verifyAutoPayTrx(trxId.trim(), user.uid, user.idToken)
+    suspend fun verifyAndAddMoney(
+        user: UserEntity,
+        method: String,
+        trxId: String,
+        enteredAmount: Double = 100.0
+    ): Result<Double> {
+        val syncedUser = remote.ensureUserSyncedWithFirebase(user)
+        if (syncedUser != user) {
+            dao.clearUsers()
+            dao.insertUser(syncedUser)
+        }
+
+        val methodDisplay = when (method.lowercase()) {
+            "bkash" -> "bKash"
+            "nagad" -> "Nagad"
+            "rocket" -> "Rocket"
+            else -> method
+        }
+
+        val res = remote.verifyAutoPayTrx(trxId.trim(), enteredAmount, methodDisplay, syncedUser)
         return if (res.isSuccess) {
             val amount = res.getOrThrow()
-            val newDeposit = user.deposit + amount
-            dao.insertUser(user.copy(deposit = newDeposit))
+            val newDeposit = syncedUser.deposit + amount
+            val updatedUser = syncedUser.copy(deposit = newDeposit)
+            dao.insertUser(updatedUser)
 
             val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
             val txKey = trxId.trim().uppercase()
             val tx = TransactionEntity(
                 id = txKey,
-                uid = user.uid,
-                type = "Deposit (Auto)",
+                uid = syncedUser.uid,
+                type = "Deposit ($methodDisplay)",
                 amount = amount,
-                method = method,
+                method = methodDisplay,
                 status = "Success",
                 txId = txKey,
                 date = df.format(Date())
             )
             dao.insertTransaction(tx)
-            remote.syncUserBalance(user.uid, newDeposit, user.winning, user.idToken)
-            remote.pushTransaction(user.uid, tx, user.idToken)
+            remote.syncUserBalance(syncedUser.uid, newDeposit, syncedUser.winning, syncedUser.idToken)
+            remote.pushTransaction(updatedUser, tx)
             Result.success(amount)
         } else {
             res
@@ -487,21 +503,28 @@ class TournamentRepository(
         number: String,
         amount: Double
     ): Result<Unit> {
+        val syncedUser = remote.ensureUserSyncedWithFirebase(user)
+        if (syncedUser != user) {
+            dao.clearUsers()
+            dao.insertUser(syncedUser)
+        }
+
         if (amount < 100.0) {
             return Result.failure(Exception("Minimum withdraw amount is 100 TK"))
         }
-        if (amount > user.winning) {
-            return Result.failure(Exception("Insufficient Winning Balance (Available: ৳${user.winning.toInt()})"))
+        if (amount > syncedUser.winning) {
+            return Result.failure(Exception("Insufficient Winning Balance (Available: ৳${syncedUser.winning.toInt()})"))
         }
 
-        val newWinning = user.winning - amount
-        dao.insertUser(user.copy(winning = newWinning))
+        val newWinning = syncedUser.winning - amount
+        val updatedUser = syncedUser.copy(winning = newWinning)
+        dao.insertUser(updatedUser)
 
         val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
         val txKey = "WD${System.currentTimeMillis().toString().takeLast(6)}"
         val tx = TransactionEntity(
             id = txKey,
-            uid = user.uid,
+            uid = syncedUser.uid,
             type = "Withdraw ($method)",
             amount = amount,
             number = number,
@@ -511,21 +534,27 @@ class TournamentRepository(
             date = df.format(Date())
         )
         dao.insertTransaction(tx)
-        remote.syncUserBalance(user.uid, user.deposit, newWinning, user.idToken)
-        remote.pushTransaction(user.uid, tx, user.idToken)
+        remote.syncUserBalance(syncedUser.uid, syncedUser.deposit, newWinning, syncedUser.idToken)
+        remote.pushWithdrawRequest(updatedUser, tx)
         return Result.success(Unit)
     }
 
     suspend fun updateProfileDetails(
         user: UserEntity,
         newUsername: String,
-        newPhone: String
+        newPhone: String,
+        newPass: String = ""
     ): Result<Unit> {
-        val updated = user.copy(
-            username = newUsername.ifBlank { user.username },
-            phone = newPhone.ifBlank { user.phone }
+        val syncedUser = remote.ensureUserSyncedWithFirebase(user)
+        val finalName = newUsername.ifBlank { syncedUser.username }
+        val finalPhone = newPhone.ifBlank { syncedUser.phone }
+        val updated = syncedUser.copy(
+            username = finalName,
+            phone = finalPhone
         )
+        dao.clearUsers()
         dao.insertUser(updated)
+        remote.updateUserProfileInFirebase(updated, finalName, finalPhone, newPass)
         return Result.success(Unit)
     }
 }
