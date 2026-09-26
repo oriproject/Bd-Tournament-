@@ -58,7 +58,7 @@ class TournamentRepository(
                 dao.insertUser(syncedUser)
             }
             activeToken = syncedUser.idToken
-            val remoteTxs = remote.fetchUserTransactions(syncedUser.uid, syncedUser.idToken)
+            val remoteTxs = remote.syncAndFetchUserTransactions(syncedUser)
             if (remoteTxs.isNotEmpty()) {
                 dao.insertTransactions(remoteTxs)
             }
@@ -111,9 +111,13 @@ class TournamentRepository(
             dao.insertNotifications(remoteNotifs)
         }
 
-        // Sync active user's balance & transactions from Firebase (in case updated by Admin Panel)
+        // Sync active user's transactions (checking for newly Approved deposits) & balance from Firebase
         val curUser = dao.getActiveUser().first()
         if (curUser != null) {
+            val remoteTxs = remote.syncAndFetchUserTransactions(curUser)
+            if (remoteTxs.isNotEmpty()) {
+                dao.insertTransactions(remoteTxs)
+            }
             val remoteUser = remote.fetchRemoteUser(curUser.uid, curUser.idToken)
             if (remoteUser != null) {
                 dao.insertUser(curUser.copy(
@@ -122,10 +126,6 @@ class TournamentRepository(
                     deposit = remoteUser.deposit,
                     winning = remoteUser.winning
                 ))
-            }
-            val remoteTxs = remote.fetchUserTransactions(curUser.uid, curUser.idToken)
-            if (remoteTxs.isNotEmpty()) {
-                dao.insertTransactions(remoteTxs)
             }
         }
     }
@@ -454,7 +454,8 @@ class TournamentRepository(
         user: UserEntity,
         method: String,
         trxId: String,
-        enteredAmount: Double = 100.0
+        enteredAmount: Double,
+        senderNumber: String
     ): Result<Double> {
         val syncedUser = remote.ensureUserSyncedWithFirebase(user)
         if (syncedUser != user) {
@@ -469,28 +470,33 @@ class TournamentRepository(
             else -> method
         }
 
-        val res = remote.verifyAutoPayTrx(trxId.trim(), enteredAmount, methodDisplay, syncedUser)
+        val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
+        val dateStr = df.format(Date())
+        val txKey = trxId.trim().uppercase()
+        val cleanSender = senderNumber.trim()
+
+        val res = remote.submitDepositRequest(
+            trxId = txKey,
+            enteredAmount = enteredAmount,
+            senderNumber = cleanSender,
+            method = methodDisplay,
+            dateStr = dateStr,
+            user = syncedUser
+        )
         return if (res.isSuccess) {
             val amount = res.getOrThrow()
-            val newDeposit = syncedUser.deposit + amount
-            val updatedUser = syncedUser.copy(deposit = newDeposit)
-            dao.insertUser(updatedUser)
-
-            val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
-            val txKey = trxId.trim().uppercase()
             val tx = TransactionEntity(
                 id = txKey,
                 uid = syncedUser.uid,
                 type = "Deposit ($methodDisplay)",
                 amount = amount,
+                number = cleanSender,
                 method = methodDisplay,
-                status = "Success",
+                status = "Pending",
                 txId = txKey,
-                date = df.format(Date())
+                date = dateStr
             )
             dao.insertTransaction(tx)
-            remote.syncUserBalance(syncedUser.uid, newDeposit, syncedUser.winning, syncedUser.idToken)
-            remote.pushTransaction(updatedUser, tx)
             Result.success(amount)
         } else {
             res
@@ -510,15 +516,23 @@ class TournamentRepository(
         }
 
         if (amount < 100.0) {
-            return Result.failure(Exception("Minimum withdraw amount is 100 TK"))
-        }
-        if (amount > syncedUser.winning) {
-            return Result.failure(Exception("Insufficient Winning Balance (Available: ৳${syncedUser.winning.toInt()})"))
+            return Result.failure(Exception("সর্বনিম্ন উইথড্র ১০০ টাকা (Minimum withdraw amount is 100 TK)"))
         }
 
-        val newWinning = syncedUser.winning - amount
-        val updatedUser = syncedUser.copy(winning = newWinning)
-        dao.insertUser(updatedUser)
+        val existingTxs = dao.getTransactionsForUser(syncedUser.uid).first()
+        val pendingWithdrawTotal = existingTxs
+            .filter {
+                it.type.contains("Withdraw", ignoreCase = true) &&
+                        it.status.equals("Pending", ignoreCase = true)
+            }
+            .sumOf { it.amount }
+
+        val availableForWithdraw = syncedUser.winning - pendingWithdrawTotal
+        if (amount > availableForWithdraw) {
+            return Result.failure(
+                Exception("পর্যাপ্ত উইনিং ব্যালেন্স নেই! (Available Winning Balance: ৳${availableForWithdraw.toInt().coerceAtLeast(0)})")
+            )
+        }
 
         val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
         val txKey = "WD${System.currentTimeMillis().toString().takeLast(6)}"
@@ -534,8 +548,7 @@ class TournamentRepository(
             date = df.format(Date())
         )
         dao.insertTransaction(tx)
-        remote.syncUserBalance(syncedUser.uid, syncedUser.deposit, newWinning, syncedUser.idToken)
-        remote.pushWithdrawRequest(updatedUser, tx)
+        remote.pushWithdrawRequest(syncedUser, tx)
         return Result.success(Unit)
     }
 

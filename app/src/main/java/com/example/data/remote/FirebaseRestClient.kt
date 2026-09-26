@@ -869,6 +869,153 @@ class FirebaseRestClient {
         user
     }
 
+    private fun isApprovedStatus(status: String): Boolean {
+        val s = status.trim().lowercase()
+        return s == "approved" || s == "success" || s == "completed" || s == "accepted" || s == "approve"
+    }
+
+    private fun isRejectedStatus(status: String): Boolean {
+        val s = status.trim().lowercase()
+        return s == "rejected" || s == "cancelled" || s == "canceled" || s == "declined" || s == "failed" || s == "reject"
+    }
+
+    suspend fun syncAndFetchUserTransactions(user: UserEntity): List<TransactionEntity> =
+        withContext(Dispatchers.IO) {
+            val uid = user.uid
+            val idToken = user.idToken
+            val txRoot = getJson("transactions/$uid", idToken) ?: JSONObject()
+            val depReqRoot = getJson("deposit_requests", idToken)
+            val autoPayRoot = getJson("Auto Pay", idToken)
+            val wdReqRoot = getJson("withdraw_requests", idToken)
+
+            var totalNewlyCredited = 0.0
+            var totalNewlyDebited = 0.0
+            val list = mutableListOf<TransactionEntity>()
+            val keys = txRoot.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = txRoot.optJSONObject(k) ?: continue
+                val type = v.optString("type", "Transaction")
+                val amount = v.optDouble("amount", 0.0)
+                val number = v.optString("number", "").ifBlank { v.optString("senderNumber", "") }
+                val method = v.optString("method", "")
+                var status = v.optString("status", "Pending")
+                val txId = v.optString("txID", k).ifBlank { k }
+                val date = v.optString("date", "")
+                var credited = v.optBoolean("credited", false)
+
+                if (type.contains("Deposit", ignoreCase = true)) {
+                    val depItem = depReqRoot?.optJSONObject(k) ?: depReqRoot?.optJSONObject(txId)
+                    val autoItem = autoPayRoot?.optJSONObject(k) ?: autoPayRoot?.optJSONObject(txId)
+
+                    val depStatus = depItem?.optString("status", "") ?: ""
+                    val autoStatus = autoItem?.optString("status", "") ?: ""
+                    val alreadyCreditedAnywhere = credited ||
+                            (depItem?.optBoolean("credited", false) == true) ||
+                            (autoItem?.optBoolean("credited", false) == true)
+
+                    val approvedAnywhere = isApprovedStatus(status) ||
+                            isApprovedStatus(depStatus) ||
+                            isApprovedStatus(autoStatus)
+                    val rejectedAnywhere = !approvedAnywhere && (
+                            isRejectedStatus(status) ||
+                                    isRejectedStatus(depStatus) ||
+                                    isRejectedStatus(autoStatus)
+                            )
+
+                    if (approvedAnywhere) {
+                        status = "Approved"
+                        if (!alreadyCreditedAnywhere && amount > 0.0) {
+                            credited = true
+                            totalNewlyCredited += amount
+                            val updateObj = JSONObject().apply {
+                                put("status", "Approved")
+                                put("credited", true)
+                                put("approvedAt", System.currentTimeMillis())
+                            }
+                            patchJson("transactions/$uid/$k", updateObj, idToken)
+                            patchJson("deposit_requests/$txId", updateObj, idToken)
+                            patchJson("Auto Pay/$txId", updateObj, idToken)
+                        } else if (!isApprovedStatus(v.optString("status", ""))) {
+                            val updateObj = JSONObject().apply {
+                                put("status", "Approved")
+                                put("credited", true)
+                            }
+                            patchJson("transactions/$uid/$k", updateObj, idToken)
+                        }
+                    } else if (rejectedAnywhere && status != "Rejected") {
+                        status = "Rejected"
+                        val updateObj = JSONObject().apply {
+                            put("status", "Rejected")
+                        }
+                        patchJson("transactions/$uid/$k", updateObj, idToken)
+                        patchJson("deposit_requests/$txId", updateObj, idToken)
+                        patchJson("Auto Pay/$txId", updateObj, idToken)
+                    }
+                } else if (type.contains("Withdraw", ignoreCase = true)) {
+                    val wdItem = wdReqRoot?.optJSONObject(k) ?: wdReqRoot?.optJSONObject(txId)
+                    val wdStatus = wdItem?.optString("status", "") ?: ""
+                    val debited = v.optBoolean("debited", false)
+                    val alreadyDebitedAnywhere = debited || (wdItem?.optBoolean("debited", false) == true)
+
+                    val approvedAnywhere = isApprovedStatus(status) || isApprovedStatus(wdStatus)
+                    val rejectedAnywhere = !approvedAnywhere && (isRejectedStatus(status) || isRejectedStatus(wdStatus))
+
+                    if (approvedAnywhere) {
+                        status = "Approved"
+                        if (!alreadyDebitedAnywhere && amount > 0.0) {
+                            totalNewlyDebited += amount
+                            val updateObj = JSONObject().apply {
+                                put("status", "Approved")
+                                put("debited", true)
+                                put("approvedAt", System.currentTimeMillis())
+                            }
+                            patchJson("transactions/$uid/$k", updateObj, idToken)
+                            patchJson("withdraw_requests/$txId", updateObj, idToken)
+                        } else if (!isApprovedStatus(v.optString("status", ""))) {
+                            val updateObj = JSONObject().apply {
+                                put("status", "Approved")
+                                put("debited", true)
+                            }
+                            patchJson("transactions/$uid/$k", updateObj, idToken)
+                        }
+                    } else if (rejectedAnywhere && status != "Rejected") {
+                        status = "Rejected"
+                        val updateObj = JSONObject().apply {
+                            put("status", "Rejected")
+                        }
+                        patchJson("transactions/$uid/$k", updateObj, idToken)
+                        patchJson("withdraw_requests/$txId", updateObj, idToken)
+                    }
+                }
+
+                list.add(
+                    TransactionEntity(
+                        id = k,
+                        uid = uid,
+                        type = type,
+                        amount = amount,
+                        number = number,
+                        method = method,
+                        status = status,
+                        txId = txId,
+                        date = date
+                    )
+                )
+            }
+
+            if (totalNewlyCredited > 0.0 || totalNewlyDebited > 0.0) {
+                val remoteUserObj = getJson("users/$uid", idToken)
+                val currentRemoteDeposit = remoteUserObj?.optDouble("deposit", user.deposit) ?: user.deposit
+                val currentRemoteWinning = remoteUserObj?.optDouble("winning", user.winning) ?: user.winning
+                val updatedDeposit = currentRemoteDeposit + totalNewlyCredited
+                val updatedWinning = maxOf(0.0, currentRemoteWinning - totalNewlyDebited)
+                syncUserBalance(uid, updatedDeposit, updatedWinning, idToken)
+            }
+
+            list
+        }
+
     suspend fun fetchUserTransactions(uid: String, idToken: String): List<TransactionEntity> =
         withContext(Dispatchers.IO) {
             val d = getJson("transactions/$uid", idToken) ?: return@withContext emptyList()
@@ -885,7 +1032,7 @@ class FirebaseRestClient {
                         amount = v.optDouble("amount", 0.0),
                         number = v.optString("number", ""),
                         method = v.optString("method", ""),
-                        status = v.optString("status", "Success"),
+                        status = v.optString("status", "Pending"),
                         txId = v.optString("txID", k),
                         date = v.optString("date", "")
                     )
@@ -927,6 +1074,7 @@ class FirebaseRestClient {
         withContext(Dispatchers.IO) {
             val payload = JSONObject().apply {
                 put("id", tx.id)
+                put("txID", tx.txId)
                 put("uid", user.uid)
                 put("username", user.username)
                 put("email", user.email)
@@ -935,8 +1083,8 @@ class FirebaseRestClient {
                 put("amount", tx.amount)
                 put("number", tx.number)
                 put("method", tx.method)
-                put("status", tx.status)
-                put("txID", tx.txId)
+                put("status", "Pending")
+                put("debited", false)
                 put("date", tx.date)
                 put("timestamp", System.currentTimeMillis())
             }
@@ -964,80 +1112,60 @@ class FirebaseRestClient {
         patchJson("matches/$matchKey", mPayload, idToken)
     }
 
-    suspend fun verifyAutoPayTrx(
+    suspend fun submitDepositRequest(
         trxId: String,
         enteredAmount: Double,
+        senderNumber: String,
         method: String,
+        dateStr: String,
         user: UserEntity
     ): Result<Double> = withContext(Dispatchers.IO) {
         try {
             val cleanTrx = trxId.trim().uppercase()
+            val cleanSender = senderNumber.trim()
+            if (cleanSender.length < 11) {
+                return@withContext Result.failure(Exception("যে নাম্বার থেকে টাকা পাঠিয়েছেন সেই সঠিক একাউন্ট নাম্বার দিন (কমপক্ষে ১১ ডিজিট)"))
+            }
             if (cleanTrx.length < 4) {
                 return@withContext Result.failure(Exception("সঠিক Transaction ID দিন (কমপক্ষে ৪ অক্ষর)"))
             }
-
-            // 1. Check if this Transaction ID was already used in Firebase RTDB ("Auto Pay/$cleanTrx")
-            val usedObj = getJson("Auto Pay/$cleanTrx", user.idToken)
-            if (usedObj != null) {
-                return@withContext Result.failure(Exception("এই Transaction ID ($cleanTrx) ইতিমধ্যে ব্যবহার করা হয়েছে!"))
+            if (enteredAmount <= 0.0) {
+                return@withContext Result.failure(Exception("সঠিক টাকার পরিমাণ (Amount) লিখুন"))
             }
 
-            // 2. Check if XNXANIKPAY has an auto-detected SMS entry for this TrxID
-            var verifiedAmount = 0.0
-            var matchedFromSmsGateway = false
-            val apiObj = getJson("XNXANIKPAY", user.idToken)
-            if (apiObj != null) {
-                val keys = apiObj.keys()
-                while (keys.hasNext()) {
-                    val k = keys.next()
-                    val item = apiObj.optJSONObject(k)
-                    if (item != null) {
-                        val itemTx = item.optString("txid", "")
-                            .ifBlank { item.optString("trxId", "") }
-                            .ifBlank { item.optString("trx_id", "") }
-                        val smsBody = item.optString("body", "").ifBlank { item.optString("message", "") }
-                        if (itemTx.equals(cleanTrx, ignoreCase = true) ||
-                            k.equals(cleanTrx, ignoreCase = true) ||
-                            (smsBody.isNotBlank() && smsBody.contains(cleanTrx, ignoreCase = true))
-                        ) {
-                            val amt = item.optDouble("amount", 0.0)
-                            if (amt > 0) {
-                                verifiedAmount = amt
-                                matchedFromSmsGateway = true
-                                break
-                            }
-                        }
-                    }
-                }
+            // 1. Check if this Transaction ID was already submitted in Firebase RTDB
+            val existingAutoPay = getJson("Auto Pay/$cleanTrx", user.idToken)
+            val existingDepReq = getJson("deposit_requests/$cleanTrx", user.idToken)
+            val existingUserTx = getJson("transactions/${user.uid}/$cleanTrx", user.idToken)
+            if (existingAutoPay != null || existingDepReq != null || existingUserTx != null) {
+                return@withContext Result.failure(Exception("এই Transaction ID ($cleanTrx) ইতিমধ্যে সাবমিট করা হয়েছে!"))
             }
 
-            // 3. If not found in SMS gateway, use the user's entered amount (or 100 TK default for demo codes)
-            if (verifiedAmount <= 0.0) {
-                verifiedAmount = when {
-                    cleanTrx.equals("DEMO500", ignoreCase = true) -> 500.0
-                    cleanTrx.equals("DEMO100", ignoreCase = true) || cleanTrx.equals("BKASH100", ignoreCase = true) -> 100.0
-                    enteredAmount > 0.0 -> enteredAmount
-                    else -> 100.0
-                }
-            }
-
-            // 4. Record in Firebase Realtime Database under "Auto Pay/$cleanTrx" and "deposit_requests/$cleanTrx"
+            // 2. Save as Pending in Firebase Realtime Database (Admin will verify TrxID & Sender Number and change status to "Approved")
             val now = System.currentTimeMillis()
-            val autoPayPayload = JSONObject().apply {
+            val depositPayload = JSONObject().apply {
+                put("id", cleanTrx)
                 put("trxId", cleanTrx)
-                put("amount", verifiedAmount)
-                put("method", method)
-                put("usedBy", user.uid)
+                put("txID", cleanTrx)
+                put("uid", user.uid)
                 put("username", user.username)
                 put("email", user.email)
-                put("verifiedByGateway", matchedFromSmsGateway)
-                put("status", "Success")
-                put("time", now)
+                put("phone", user.phone)
+                put("type", "Deposit ($method)")
+                put("method", method)
+                put("amount", enteredAmount)
+                put("number", cleanSender)
+                put("senderNumber", cleanSender)
+                put("status", "Pending")
+                put("credited", false)
+                put("date", dateStr)
+                put("timestamp", now)
             }
-            putJson("Auto Pay/$cleanTrx", autoPayPayload, user.idToken)
-            putJson("deposit_requests/$cleanTrx", autoPayPayload, user.idToken)
+            putJson("deposit_requests/$cleanTrx", depositPayload, user.idToken)
+            putJson("Auto Pay/$cleanTrx", depositPayload, user.idToken)
+            putJson("transactions/${user.uid}/$cleanTrx", depositPayload, user.idToken)
 
-            Result.success(verifiedAmount)
+            Result.success(enteredAmount)
         } catch (e: Exception) {
             Result.failure(e)
         }

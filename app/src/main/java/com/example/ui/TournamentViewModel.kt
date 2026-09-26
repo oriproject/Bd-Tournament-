@@ -146,7 +146,7 @@ class TournamentViewModel(
         // Live periodic sync with Firebase Realtime Database so Admin Panel updates reflect automatically
         viewModelScope.launch {
             while (true) {
-                delay(8000L)
+                delay(4000L)
                 try {
                     repository.syncLiveFromFirebase()
                 } catch (_: Exception) {
@@ -407,34 +407,51 @@ class TournamentViewModel(
         }
     }
 
-    fun verifyAutoPay(trxId: String, amountStr: String = "100") {
+    fun verifyAutoPay(trxId: String, amountStr: String = "", senderNumber: String = "") {
         val user = currentUser.value ?: return
-        if (trxId.isBlank()) {
+        val enteredAmount = amountStr.trim().toDoubleOrNull()
+        if (enteredAmount == null || enteredAmount <= 0.0) {
             _alertMessage.value = AlertMessage(
                 type = AlertType.WARNING,
-                title = "Oops...",
-                message = "Please enter Transaction ID"
+                title = "টাকার পরিমাণ দিন",
+                message = "অনুগ্রহ করে কত টাকা ডিপোজিট করেছেন তা লিখুন (Amount)।"
             )
             return
         }
-        val enteredAmount = amountStr.trim().toDoubleOrNull()?.takeIf { it > 0.0 } ?: 100.0
+        val cleanSender = senderNumber.trim()
+        if (cleanSender.length < 11) {
+            _alertMessage.value = AlertMessage(
+                type = AlertType.WARNING,
+                title = "একাউন্ট নাম্বার দিন",
+                message = "অনুগ্রহ করে যে নাম্বার থেকে টাকা পাঠিয়েছেন সেই একাউন্ট নাম্বারটি লিখুন।"
+            )
+            return
+        }
+        if (trxId.isBlank()) {
+            _alertMessage.value = AlertMessage(
+                type = AlertType.WARNING,
+                title = "ট্রানজেকশন আইডি দিন",
+                message = "অনুগ্রহ করে আপনার Transaction ID (TrxID) লিখুন।"
+            )
+            return
+        }
         viewModelScope.launch {
             _isLoading.value = true
-            val res = repository.verifyAndAddMoney(user, _currentPayMethod.value, trxId, enteredAmount)
+            val res = repository.verifyAndAddMoney(user, _currentPayMethod.value, trxId, enteredAmount, cleanSender)
             _isLoading.value = false
             if (res.isSuccess) {
                 val added = res.getOrThrow()
                 _alertMessage.value = AlertMessage(
-                    type = AlertType.SUCCESS,
-                    title = "Successful!",
-                    message = "Successfully added ${added.toInt()} TK!",
+                    type = AlertType.INFO,
+                    title = "Pending Submitted!",
+                    message = "আপনার ৳${added.toInt()} ডিপোজিট রিকোয়েস্ট (নাম্বার: $cleanSender, TrxID: ${trxId.trim().uppercase()}) সফলভাবে সাবমিট হয়েছে। এডমিন যাচাই করে Approve করলেই আপনার একাউন্টে টাকা যোগ হয়ে যাবে।",
                     onConfirm = { navigateBack() }
                 )
             } else {
                 _alertMessage.value = AlertMessage(
                     type = AlertType.ERROR,
-                    title = "Invalid",
-                    message = res.exceptionOrNull()?.message ?: "Invalid TrxID."
+                    title = "Error",
+                    message = res.exceptionOrNull()?.message ?: "Could not submit deposit request."
                 )
             }
         }
@@ -442,9 +459,13 @@ class TournamentViewModel(
 
     fun submitWithdraw(number: String, amountStr: String) {
         val user = currentUser.value ?: return
-        val amount = amountStr.toDoubleOrNull()
-        if (number.isBlank() || amount == null) {
-            _alertMessage.value = AlertMessage(AlertType.ERROR, "Error", "Fill all fields")
+        val amount = amountStr.trim().toDoubleOrNull()
+        if (number.isBlank() || amount == null || amount <= 0.0) {
+            _alertMessage.value = AlertMessage(
+                type = AlertType.WARNING,
+                title = "সব তথ্য দিন",
+                message = "অনুগ্রহ করে মোবাইল নাম্বার এবং উইথড্র করার টাকার পরিমাণ লিখুন।"
+            )
             return
         }
         viewModelScope.launch {
@@ -453,9 +474,9 @@ class TournamentViewModel(
             _isLoading.value = false
             if (res.isSuccess) {
                 _alertMessage.value = AlertMessage(
-                    type = AlertType.SUCCESS,
-                    title = "Request Submitted",
-                    message = "Your withdrawal request of ৳${amount.toInt()} via ${_selectedWithdrawMethod.value} has been submitted.",
+                    type = AlertType.INFO,
+                    title = "Pending Submitted!",
+                    message = "আপনার ৳${amount.toInt()} উইথড্র রিকোয়েস্ট (${_selectedWithdrawMethod.value}: ${number.trim()}) সফলভাবে Pending হিসেবে সাবমিট হয়েছে। এডমিন ভেরিফাই করে Approve করলেই আপনার নাম্বারে টাকা পাঠিয়ে দেওয়া হবে।",
                     onConfirm = { navigateBack() }
                 )
             } else {

@@ -418,12 +418,13 @@ fun AddMoneyScreen(
     currentMethod: String,
     appSettings: AppSettingsData,
     onSelectMethod: (String) -> Unit,
-    onVerify: (String, String) -> Unit,
+    onVerify: (String, String, String) -> Unit,
     onCopySuccess: () -> Unit,
     onBack: () -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
     var amountInput by remember(currentMethod) { mutableStateOf("") }
+    var senderNumber by remember(currentMethod) { mutableStateOf("") }
     var trxId by remember(currentMethod) { mutableStateOf("") }
 
     val (boxColor, inputBgColor, dialCode, methodLabel, recipientNumber) = when (currentMethod) {
@@ -489,10 +490,10 @@ fun AddMoneyScreen(
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "টাকার পরিমাণ এবং ট্রানজেকশন আইডি দিন",
+                        text = "টাকার পরিমাণ, একাউন্ট নাম্বার ও ট্রানজেকশন আইডি দিন",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        fontSize = 15.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -530,6 +531,43 @@ fun AddMoneyScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("add_money_amount_input")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Sender Account Number Input Box
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(inputBgColor)
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (senderNumber.isEmpty()) {
+                            Text(
+                                text = "যে নাম্বার থেকে টাকা পাঠিয়েছেন (Account Number)",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        BasicTextField(
+                            value = senderNumber,
+                            onValueChange = { senderNumber = it },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            textStyle = TextStyle(
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            cursorBrush = SolidColor(Color.White),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("add_money_sender_number_input")
                         )
                     }
 
@@ -622,14 +660,14 @@ fun AddMoneyScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
                     BulletInstruction("নিশ্চিত করতে এখন আপনার $methodLabel মোবাইল মেনু পিন লিখুন।")
-                    BulletInstruction("এখন উপরের বক্সে আপনার Amount এবং Transaction ID দিন আর নিচের VERIFY বাটনে ক্লিক করুন।")
+                    BulletInstruction("এখন উপরের বক্সে আপনার Amount, যে নাম্বার থেকে টাকা পাঠিয়েছেন এবং Transaction ID দিন আর নিচের VERIFY বাটনে ক্লিক করুন।")
                 }
             }
 
             Spacer(modifier = Modifier.height(15.dp))
 
             Button(
-                onClick = { onVerify(trxId, amountInput) },
+                onClick = { onVerify(trxId, amountInput, senderNumber) },
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = boxColor),
                 modifier = Modifier
@@ -1094,10 +1132,19 @@ fun HistoryScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(transactions, key = { it.id }) { t ->
-                    val isDepositOrWin = t.type.contains("Deposit", ignoreCase = true) ||
-                            t.type.contains("Win", ignoreCase = true)
-                    val borderColor = if (isDepositOrWin) EsportsGreen else EsportsOrange
-                    val shortTag = if (t.txId.isNotBlank()) "#${t.txId.take(4)}" else "#TRX"
+                    val statusText = t.status.ifBlank { "Pending" }
+                    val isApproved = statusText.equals("Approved", ignoreCase = true) ||
+                            statusText.equals("Success", ignoreCase = true) ||
+                            statusText.equals("Completed", ignoreCase = true)
+                    val isRejected = statusText.equals("Rejected", ignoreCase = true) ||
+                            statusText.equals("Cancelled", ignoreCase = true) ||
+                            statusText.equals("Failed", ignoreCase = true)
+                    val statusColor = when {
+                        isApproved -> EsportsGreen
+                        isRejected -> DangerRed
+                        else -> EsportsGold
+                    }
+                    val trxLabel = if (t.txId.isNotBlank()) "TrxID: ${t.txId}" else "#TRX"
 
                     Card(
                         shape = RoundedCornerShape(10.dp),
@@ -1112,7 +1159,7 @@ fun HistoryScreen(
                                 modifier = Modifier
                                     .width(5.dp)
                                     .height(78.dp)
-                                    .background(borderColor)
+                                    .background(statusColor)
                             )
                             Row(
                                 modifier = Modifier
@@ -1129,6 +1176,15 @@ fun HistoryScreen(
                                         color = TextWhite
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
+                                    if (t.number.isNotBlank()) {
+                                        Text(
+                                            text = "Number : ${t.number}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = EsportsOrange
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                    }
                                     Text(
                                         text = t.date,
                                         fontSize = 11.sp,
@@ -1139,7 +1195,7 @@ fun HistoryScreen(
                                         text = "Amount : ৳${t.amount.toInt()}",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = if (isDepositOrWin) EsportsGreen else EsportsGold
+                                        color = statusColor
                                     )
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
@@ -1149,7 +1205,7 @@ fun HistoryScreen(
                                         border = BorderStroke(1.dp, CardBorderDark)
                                     ) {
                                         Text(
-                                            text = shortTag,
+                                            text = trxLabel,
                                             color = EsportsOrange,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
@@ -1158,9 +1214,10 @@ fun HistoryScreen(
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = t.status.ifBlank { "Success" },
-                                        fontSize = 10.sp,
-                                        color = TextMuted
+                                        text = statusText,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = statusColor
                                     )
                                 }
                             }
