@@ -219,6 +219,7 @@ fun BdTournamentApp() {
                     }
                     SubScreen.Refer -> {
                         ReferScreen(
+                            user = currentUser,
                             onCopySuccess = viewModel::showCopiedToast,
                             onBack = viewModel::navigateBack
                         )

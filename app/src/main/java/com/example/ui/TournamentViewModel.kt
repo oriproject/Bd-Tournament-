@@ -346,14 +346,14 @@ class TournamentViewModel(
         }
     }
 
-    fun registerWithEmail(username: String, email: String, phone: String, pass: String) {
+    fun registerWithEmail(username: String, email: String, phone: String, pass: String, promoCode: String = "") {
         if (username.isBlank() || email.isBlank() || phone.isBlank() || pass.isBlank()) {
             _alertMessage.value = AlertMessage(AlertType.ERROR, "Error", "Please fill all fields")
             return
         }
         viewModelScope.launch {
             _isLoading.value = true
-            val res = repository.registerWithEmail(username, email, phone, pass)
+            val res = repository.registerWithEmail(username, email, phone, pass, promoCode)
             _isLoading.value = false
             if (res.isFailure) {
                 _alertMessage.value = AlertMessage(

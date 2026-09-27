@@ -96,7 +96,7 @@ fun AuthScreen(
     authMode: String,
     onToggleMode: (String) -> Unit,
     onLogin: (String, String) -> Unit,
-    onRegister: (String, String, String, String) -> Unit,
+    onRegister: (String, String, String, String, String) -> Unit,
     onGoogleLogin: (String?, String, String, String) -> Unit
 ) {
     val context = LocalContext.current
@@ -398,7 +398,7 @@ fun AuthScreen(
                     }
 
                     Button(
-                        onClick = { onRegister(regUsername, regEmail, regPhone, regPass) },
+                        onClick = { onRegister(regUsername, regEmail, regPhone, regPass, regPromo) },
                         shape = RoundedCornerShape(30.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = EsportsOrange,

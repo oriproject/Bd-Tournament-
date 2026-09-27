@@ -27,7 +27,8 @@ data class MatchEntity(
     val status: String, // "Upcoming", "Ongoing", "Finished"
     val roomId: String = "",
     val roomPass: String = "",
-    val prizeDesc: String = ""
+    val prizeDesc: String = "",
+    val matchDesc: String = ""
 )
 
 @Entity(tableName = "participants")
@@ -70,7 +71,9 @@ data class UserEntity(
     val photoUrl: String = "",
     val deposit: Double = 0.0,
     val winning: Double = 0.0,
-    val idToken: String = ""
+    val idToken: String = "",
+    val promoCode: String = "",
+    val referredBy: String = ""
 )
 
 data class BannerItem(

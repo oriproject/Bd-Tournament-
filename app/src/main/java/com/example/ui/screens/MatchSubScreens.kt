@@ -285,6 +285,49 @@ fun MatchDetailsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Match Description Container (Above Participants)
+            val resolvedDescription = remember(match.matchDesc, match.prizeDesc) {
+                when {
+                    match.matchDesc.isNotBlank() -> match.matchDesc
+                    match.prizeDesc.isNotBlank() -> match.prizeDesc
+                    else -> "• অবশ্যই আপনার সঠিক গেম আইডি (Game ID Name) দিয়ে জয়েন করবেন।\n• ম্যাচ শুরু হওয়ার ১০ মিনিট আগে Room ID এবং Password দেওয়া হবে।\n• যেকোনো ধরনের হ্যাক, প্যানেল বা টিমিং করলে একাউন্ট সাসপেন্ড করা হবে।"
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(CardDark)
+                    .padding(15.dp)
+                    .testTag("match_description_section")
+            ) {
+                Text(
+                    text = "Match Description",
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 15.sp,
+                    color = TextWhite,
+                    modifier = Modifier.padding(bottom = 10.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(EsportsOrange)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = resolvedDescription,
+                    color = TextWhite.copy(alpha = 0.9f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            HorizontalDivider(color = CardBorderDark)
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             // Participants Table Container
             Column(
                 modifier = Modifier
@@ -443,7 +486,7 @@ fun ResultDetailsScreen(
                         ResultStatCol("ENTRY FEE", "৳${match.entry}", EsportsGreen)
                     }
 
-                    // WINNER WINNER CHICKEN DINNER
+                    // WINNER LIST
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -452,7 +495,7 @@ fun ResultDetailsScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "WINNER WINNER CHICKEN DINNER",
+                            text = "WINNER LIST",
                             color = Color.Black,
                             fontWeight = FontWeight.Black,
                             fontSize = 14.sp
@@ -565,16 +608,9 @@ fun JoinMatchScreen(
 ) {
     if (match == null) return
 
-    val slots = when {
-        match.type.contains("duo", ignoreCase = true) -> 2
-        match.type.contains("squad", ignoreCase = true) -> 4
-        else -> 1
-    }
-
+    // Always 1 slot per user regardless of Solo / Duo / Squad / 2v2 / 4v4
     val playerNames = remember(match.dbKey) {
-        mutableStateListOf<String>().apply {
-            repeat(slots) { add("") }
-        }
+        mutableStateListOf("")
     }
 
     Box(
@@ -681,32 +717,30 @@ fun JoinMatchScreen(
 
                     Spacer(modifier = Modifier.height(18.dp))
 
-                    // Dynamic Inputs
-                    repeat(slots) { i ->
-                        OutlinedTextField(
-                            value = playerNames[i],
-                            onValueChange = { playerNames[i] = it },
-                            placeholder = {
-                                Text(
-                                    text = "Player ${i + 1} Name (Game ID)",
-                                    fontSize = 14.sp,
-                                    color = TextMuted
-                                )
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = EsportsOrange,
-                                unfocusedBorderColor = CardBorderDark,
-                                focusedTextColor = TextWhite,
-                                unfocusedTextColor = TextWhite
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 10.dp)
-                                .testTag("join_player_input_${i + 1}")
-                        )
-                    }
+                    // Single Player Name Input (1 slot per user)
+                    OutlinedTextField(
+                        value = playerNames[0],
+                        onValueChange = { playerNames[0] = it },
+                        placeholder = {
+                            Text(
+                                text = "Player Name (Game ID)",
+                                fontSize = 14.sp,
+                                color = TextMuted
+                            )
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = EsportsOrange,
+                            unfocusedBorderColor = CardBorderDark,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .testTag("join_player_input_1")
+                    )
                 }
             }
         }

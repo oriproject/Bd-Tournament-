@@ -364,6 +364,8 @@ class FirebaseRestClient {
                         put("room_id", m.roomId)
                         put("room_pass", m.roomPass)
                         put("prize_desc", m.prizeDesc)
+                        put("description", m.matchDesc)
+                        put("match_desc", m.matchDesc)
                     }
                     matchRoot.put(m.dbKey, item)
                 }
@@ -429,6 +431,17 @@ class FirebaseRestClient {
         while (keys.hasNext()) {
             val k = keys.next()
             val v = d.optJSONObject(k) ?: continue
+            val prizeDesc = v.optString("prize_desc", "")
+                .ifBlank { v.optString("prizeDesc", "") }
+            val matchDesc = v.optString("description", "")
+                .ifBlank { v.optString("match_desc", "") }
+                .ifBlank { v.optString("matchDesc", "") }
+                .ifBlank { v.optString("match_description", "") }
+                .ifBlank { v.optString("matchDescription", "") }
+                .ifBlank { v.optString("rules", "") }
+                .ifBlank { v.optString("details", "") }
+                .ifBlank { v.optString("desc", "") }
+
             list.add(
                 MatchEntity(
                     dbKey = k,
@@ -436,17 +449,18 @@ class FirebaseRestClient {
                     title = v.optString("title", "Free Fire Match"),
                     time = v.optString("time", ""),
                     timestamp = v.optLong("timestamp", System.currentTimeMillis() + 3600_000L),
-                    totalPrize = v.optInt("total_prize", 500),
+                    totalPrize = v.optInt("total_prize", v.optInt("totalPrize", 500)),
                     type = v.optString("type", "Solo"),
                     entry = v.optInt("entry", 20),
-                    perKill = v.optInt("per_kill", 10),
+                    perKill = v.optInt("per_kill", v.optInt("perKill", 10)),
                     map = v.optString("map", "Bermuda"),
                     joined = v.optInt("joined", 0),
                     total = v.optInt("total", 48),
                     status = v.optString("status", "Upcoming"),
-                    roomId = v.optString("room_id", ""),
-                    roomPass = v.optString("room_pass", ""),
-                    prizeDesc = v.optString("prize_desc", "")
+                    roomId = v.optString("room_id", v.optString("roomId", "")),
+                    roomPass = v.optString("room_pass", v.optString("roomPass", "")),
+                    prizeDesc = prizeDesc,
+                    matchDesc = matchDesc
                 )
             )
         }
@@ -499,20 +513,36 @@ class FirebaseRestClient {
         list
     }
 
+    fun generatePromoCodeForUser(username: String, email: String, uid: String): String {
+        val alphaPrefix = username.replace(Regex("[^A-Za-z]"), "").uppercase().take(4)
+            .ifBlank { email.substringBefore("@").replace(Regex("[^A-Za-z]"), "").uppercase().take(4) }
+            .ifBlank { "BDT" }
+        val seed = (uid.ifBlank { email.lowercase() }).hashCode().let { if (it < 0) -it else it }
+        val digits = (1000 + (seed % 9000)).toString()
+        return "$alphaPrefix$digits"
+    }
+
     suspend fun fetchRemoteUser(uid: String, idToken: String): UserEntity? = withContext(Dispatchers.IO) {
         val userObj = getJson("users/$uid", idToken) ?: return@withContext null
         val username = userObj.optString("username", "")
         val email = userObj.optString("email", "")
         if (username.isBlank() && email.isBlank()) return@withContext null
+        val resolvedName = username.ifBlank { email.substringBefore("@") }
+        val promo = userObj.optString("promoCode", "").ifBlank {
+            generatePromoCodeForUser(resolvedName, email, uid)
+        }
+        val referredBy = userObj.optString("referredBy", "")
         UserEntity(
             uid = uid,
-            username = username.ifBlank { email.substringBefore("@") },
+            username = resolvedName,
             email = email,
             phone = userObj.optString("phone", ""),
             photoUrl = userObj.optString("photoUrl", ""),
             deposit = userObj.optDouble("deposit", 0.0),
             winning = userObj.optDouble("winning", 0.0),
-            idToken = idToken.ifBlank { currentAuthToken }
+            idToken = idToken.ifBlank { currentAuthToken },
+            promoCode = promo,
+            referredBy = referredBy
         )
     }
 
@@ -549,6 +579,10 @@ class FirebaseRestClient {
                 val resolvedPhone = userObj?.optString("phone", "") ?: ""
                 val resolvedDeposit = userObj?.optDouble("deposit", 0.0) ?: 0.0
                 val resolvedWinning = userObj?.optDouble("winning", 0.0) ?: 0.0
+                val resolvedPromo = userObj?.optString("promoCode", "")?.ifBlank {
+                    generatePromoCodeForUser(resolvedUsername, cleanEmail, uid)
+                } ?: generatePromoCodeForUser(resolvedUsername, cleanEmail, uid)
+                val resolvedReferredBy = userObj?.optString("referredBy", "") ?: ""
 
                 // Always ensure the user node exists and is up to date in Firebase Realtime Database
                 val userNode = JSONObject().apply {
@@ -558,6 +592,10 @@ class FirebaseRestClient {
                     put("phone", resolvedPhone)
                     put("deposit", resolvedDeposit)
                     put("winning", resolvedWinning)
+                    put("promoCode", resolvedPromo)
+                    if (resolvedReferredBy.isNotBlank()) {
+                        put("referredBy", resolvedReferredBy)
+                    }
                     put("lastLogin", System.currentTimeMillis())
                 }
                 putJson("users/$uid", userNode, idToken)
@@ -569,7 +607,9 @@ class FirebaseRestClient {
                     phone = resolvedPhone,
                     deposit = resolvedDeposit,
                     winning = resolvedWinning,
-                    idToken = idToken
+                    idToken = idToken,
+                    promoCode = resolvedPromo,
+                    referredBy = resolvedReferredBy
                 )
                 Result.success(user)
             }
@@ -578,12 +618,19 @@ class FirebaseRestClient {
         }
     }
 
-    suspend fun signUpEmail(username: String, email: String, phone: String, pass: String): Result<UserEntity> =
+    suspend fun signUpEmail(
+        username: String,
+        email: String,
+        phone: String,
+        pass: String,
+        referredByPromo: String = ""
+    ): Result<UserEntity> =
         withContext(Dispatchers.IO) {
             try {
                 val cleanEmail = email.trim()
                 val cleanUsername = username.trim().ifBlank { cleanEmail.substringBefore("@") }
                 val cleanPhone = phone.trim()
+                val cleanRefPromo = referredByPromo.trim().uppercase()
 
                 val authUrl = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$apiKey"
                 val payload = JSONObject().apply {
@@ -607,6 +654,7 @@ class FirebaseRestClient {
                     currentAuthToken = idToken
                     lastAuthEmail = cleanEmail
                     lastAuthPass = pass
+                    val ownPromoCode = generatePromoCodeForUser(cleanUsername, cleanEmail, uid)
 
                     // Update profile displayName in Firebase Authentication
                     val updateUrl = "https://identitytoolkit.googleapis.com/v1/accounts:update?key=$apiKey"
@@ -630,6 +678,10 @@ class FirebaseRestClient {
                         put("phone", cleanPhone)
                         put("deposit", 0.0)
                         put("winning", 0.0)
+                        put("promoCode", ownPromoCode)
+                        if (cleanRefPromo.isNotBlank()) {
+                            put("referredBy", cleanRefPromo)
+                        }
                         put("createdAt", System.currentTimeMillis())
                         put("lastLogin", System.currentTimeMillis())
                     }
@@ -643,7 +695,9 @@ class FirebaseRestClient {
                             phone = cleanPhone,
                             deposit = 0.0,
                             winning = 0.0,
-                            idToken = idToken
+                            idToken = idToken,
+                            promoCode = ownPromoCode,
+                            referredBy = cleanRefPromo
                         )
                     )
                 }
@@ -790,6 +844,10 @@ class FirebaseRestClient {
             val finalWinning = maxOf(remoteWinning, preserveWinning)
             val phone = existingObj?.optString("phone", "")?.ifBlank { preservePhone } ?: preservePhone
             val savedName = existingObj?.optString("username", resolvedName)?.ifBlank { resolvedName } ?: resolvedName
+            val ownPromo = existingObj?.optString("promoCode", "")?.ifBlank {
+                generatePromoCodeForUser(savedName, resolvedEmail, uid)
+            } ?: generatePromoCodeForUser(savedName, resolvedEmail, uid)
+            val referredBy = existingObj?.optString("referredBy", "") ?: ""
 
             val userNode = JSONObject().apply {
                 put("uid", uid)
@@ -800,6 +858,10 @@ class FirebaseRestClient {
                 put("provider", "google.com")
                 put("deposit", finalDeposit)
                 put("winning", finalWinning)
+                put("promoCode", ownPromo)
+                if (referredBy.isNotBlank()) {
+                    put("referredBy", referredBy)
+                }
                 put("lastLogin", System.currentTimeMillis())
             }
             putJson("users/$uid", userNode, firebaseIdToken)
@@ -813,7 +875,9 @@ class FirebaseRestClient {
                     photoUrl = photoUrl,
                     deposit = finalDeposit,
                     winning = finalWinning,
-                    idToken = firebaseIdToken
+                    idToken = firebaseIdToken,
+                    promoCode = ownPromo,
+                    referredBy = referredBy
                 )
             )
         } catch (e: Exception) {
@@ -839,6 +903,9 @@ class FirebaseRestClient {
             }
         } else {
             currentAuthToken = user.idToken
+            val fallbackPromo = user.promoCode.ifBlank {
+                generatePromoCodeForUser(user.username, user.email, user.uid)
+            }
             // Also make sure /users/$uid node exists in Firebase RTDB
             val existing = getJson("users/${user.uid}", user.idToken)
             if (existing == null) {
@@ -850,19 +917,31 @@ class FirebaseRestClient {
                     put("photoUrl", user.photoUrl)
                     put("deposit", user.deposit)
                     put("winning", user.winning)
+                    put("promoCode", fallbackPromo)
+                    if (user.referredBy.isNotBlank()) {
+                        put("referredBy", user.referredBy)
+                    }
                     put("lastLogin", System.currentTimeMillis())
                 }
                 putJson("users/${user.uid}", userNode, user.idToken)
+                return@withContext user.copy(promoCode = fallbackPromo)
             } else {
                 val remoteDeposit = existing.optDouble("deposit", user.deposit)
                 val remoteWinning = existing.optDouble("winning", user.winning)
                 val remoteUsername = existing.optString("username", user.username).ifBlank { user.username }
                 val remotePhone = existing.optString("phone", user.phone).ifBlank { user.phone }
+                val remotePromo = existing.optString("promoCode", "").ifBlank { fallbackPromo }
+                val remoteReferredBy = existing.optString("referredBy", user.referredBy)
+                if (existing.optString("promoCode", "").isBlank()) {
+                    patchJson("users/${user.uid}", JSONObject().apply { put("promoCode", remotePromo) }, user.idToken)
+                }
                 return@withContext user.copy(
                     username = remoteUsername,
                     phone = remotePhone,
                     deposit = remoteDeposit,
-                    winning = remoteWinning
+                    winning = remoteWinning,
+                    promoCode = remotePromo,
+                    referredBy = remoteReferredBy
                 )
             }
         }
@@ -1011,6 +1090,34 @@ class FirebaseRestClient {
                 val updatedDeposit = currentRemoteDeposit + totalNewlyCredited
                 val updatedWinning = maxOf(0.0, currentRemoteWinning - totalNewlyDebited)
                 syncUserBalance(uid, updatedDeposit, updatedWinning, idToken)
+
+                // If user was referred by someone's promoCode and deposited >= 100 TK for the first time, credit 10 TK to referrer
+                val refCode = remoteUserObj?.optString("referredBy", user.referredBy)?.trim().orEmpty()
+                val bonusAlreadyPaid = remoteUserObj?.optBoolean("referralBonusPaid", false) == true
+                if (totalNewlyCredited >= 100.0 && refCode.isNotBlank() && !bonusAlreadyPaid) {
+                    val allUsers = getJson("users", idToken)
+                    if (allUsers != null) {
+                        val uKeys = allUsers.keys()
+                        while (uKeys.hasNext()) {
+                            val refUid = uKeys.next()
+                            if (refUid == uid) continue
+                            val refObj = allUsers.optJSONObject(refUid) ?: continue
+                            val theirPromo = refObj.optString("promoCode", "").ifBlank {
+                                generatePromoCodeForUser(
+                                    refObj.optString("username", ""),
+                                    refObj.optString("email", ""),
+                                    refUid
+                                )
+                            }
+                            if (theirPromo.equals(refCode, ignoreCase = true)) {
+                                val refDep = refObj.optDouble("deposit", 0.0) + 10.0
+                                patchJson("users/$refUid", JSONObject().apply { put("deposit", refDep) }, idToken)
+                                patchJson("users/$uid", JSONObject().apply { put("referralBonusPaid", true) }, idToken)
+                                break
+                            }
+                        }
+                    }
+                }
             }
 
             list

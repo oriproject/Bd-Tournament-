@@ -325,11 +325,27 @@ private fun EpInputField(
 
 @Composable
 fun ReferScreen(
+    user: UserEntity?,
     onCopySuccess: () -> Unit,
     onBack: () -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
-    val promoCode = "BDTOURNAMENT"
+    val promoCode = remember(user?.promoCode, user?.username, user?.email, user?.uid) {
+        val savedPromo = user?.promoCode?.trim().orEmpty()
+        if (savedPromo.isNotBlank()) {
+            savedPromo
+        } else {
+            val uname = user?.username.orEmpty()
+            val email = user?.email.orEmpty()
+            val uid = user?.uid.orEmpty()
+            val alphaPrefix = uname.replace(Regex("[^A-Za-z]"), "").uppercase().take(4)
+                .ifBlank { email.substringBefore("@").replace(Regex("[^A-Za-z]"), "").uppercase().take(4) }
+                .ifBlank { "BDT" }
+            val seed = (uid.ifBlank { email.lowercase() }).hashCode().let { if (it < 0) -it else it }
+            val digits = (1000 + (seed % 9000)).toString()
+            "$alphaPrefix$digits"
+        }
+    }
 
     Column(
         modifier = Modifier
