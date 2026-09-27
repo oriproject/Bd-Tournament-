@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.data.local.AppSettingsData
 import com.example.data.local.BannerItem
 import com.example.data.local.CategoryEntity
+import com.example.data.local.LeaderboardPlayer
 import com.example.data.local.MatchEntity
 import com.example.data.local.NotificationEntity
 import com.example.data.local.ParticipantEntity
@@ -271,21 +272,56 @@ class FirebaseRestClient {
         return "GoogleAuth#${normalized}#BdTour2026"
     }
 
+    private fun parseBannerNodes(container: JSONObject, fieldName: String, outList: MutableList<BannerItem>) {
+        val obj = container.optJSONObject(fieldName)
+        if (obj != null) {
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val b = obj.optJSONObject(k)
+                if (b != null) {
+                    val img = b.optString("img", "")
+                        .ifBlank { b.optString("image", "") }
+                        .ifBlank { b.optString("imgUrl", "") }
+                        .ifBlank { b.optString("image_url", "") }
+                        .ifBlank { b.optString("banner", "") }
+                    val link = b.optString("link", "")
+                        .ifBlank { b.optString("url", "") }
+                    if (img.isNotBlank()) outList.add(BannerItem(img, link))
+                } else {
+                    val rawUrl = obj.optString(k, "")
+                    if (rawUrl.isNotBlank()) outList.add(BannerItem(rawUrl, ""))
+                }
+            }
+            return
+        }
+        val arr = container.optJSONArray(fieldName)
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val b = arr.optJSONObject(i)
+                if (b != null) {
+                    val img = b.optString("img", "")
+                        .ifBlank { b.optString("image", "") }
+                        .ifBlank { b.optString("imgUrl", "") }
+                        .ifBlank { b.optString("image_url", "") }
+                        .ifBlank { b.optString("banner", "") }
+                    val link = b.optString("link", "")
+                        .ifBlank { b.optString("url", "") }
+                    if (img.isNotBlank()) outList.add(BannerItem(img, link))
+                } else {
+                    val rawUrl = arr.optString(i, "")
+                    if (rawUrl.isNotBlank()) outList.add(BannerItem(rawUrl, ""))
+                }
+            }
+        }
+    }
+
     suspend fun fetchAppSettings(): AppSettingsData? = withContext(Dispatchers.IO) {
         val d = getJson("app_settings") ?: return@withContext null
         val bannersList = mutableListOf<BannerItem>()
-        val bannersObj = d.optJSONObject("banners")
-        if (bannersObj != null) {
-            val keys = bannersObj.keys()
-            while (keys.hasNext()) {
-                val k = keys.next()
-                val b = bannersObj.optJSONObject(k)
-                if (b != null) {
-                    val img = b.optString("img", "")
-                    val link = b.optString("link", "")
-                    if (img.isNotBlank()) bannersList.add(BannerItem(img, link))
-                }
-            }
+        parseBannerNodes(d, "banners", bannersList)
+        if (bannersList.isEmpty()) {
+            parseBannerNodes(d, "sliders", bannersList)
         }
         AppSettingsData(
             appName = "Bd Tournament",
@@ -314,7 +350,18 @@ class FirebaseRestClient {
         authToken: String? = null
     ) = withContext(Dispatchers.IO) {
         try {
-            if (getJson("app_settings", authToken) == null) {
+            val existingSettings = getJson("app_settings", authToken)
+            if (existingSettings == null) {
+                val bannersObj = JSONObject()
+                defaultSettings.banners.forEachIndexed { index, banner ->
+                    bannersObj.put(
+                        "banner_${index + 1}",
+                        JSONObject().apply {
+                            put("img", banner.img)
+                            put("link", banner.link)
+                        }
+                    )
+                }
                 val settingsObj = JSONObject().apply {
                     put("app_name", "Bd Tournament")
                     put("app_logo", defaultSettings.appLogo)
@@ -329,8 +376,30 @@ class FirebaseRestClient {
                     put("shop_link", defaultSettings.shopLink)
                     put("show_popup", defaultSettings.showPopup)
                     put("popup_text", defaultSettings.popupText)
+                    put("banners", bannersObj)
+                    put("banners_initialized", true)
                 }
                 putJson("app_settings", settingsObj, authToken)
+            } else if (!existingSettings.optBoolean("banners_initialized", false)) {
+                val hasBannersNode = existingSettings.optJSONObject("banners") != null ||
+                    existingSettings.optJSONArray("banners") != null
+                val patchObj = JSONObject().apply {
+                    put("banners_initialized", true)
+                    if (!hasBannersNode && defaultSettings.banners.isNotEmpty()) {
+                        val bannersObj = JSONObject()
+                        defaultSettings.banners.forEachIndexed { index, banner ->
+                            bannersObj.put(
+                                "banner_${index + 1}",
+                                JSONObject().apply {
+                                    put("img", banner.img)
+                                    put("link", banner.link)
+                                }
+                            )
+                        }
+                        put("banners", bannersObj)
+                    }
+                }
+                patchJson("app_settings", patchObj, authToken)
             }
 
             if (getJson("categories", authToken) == null && defaultCategories.isNotEmpty()) {
@@ -401,9 +470,197 @@ class FirebaseRestClient {
                 }
                 putJson("notifications", notifRoot, authToken)
             }
+
+            if (getJson("top_players", authToken) == null) {
+                val defaultTop = listOf(
+                    LeaderboardPlayer("tp_1", "HOSSAINFARDIN", "", 1240, 0, 14, 1240, 0, 4, 1240, 0, 9),
+                    LeaderboardPlayer("tp_2", "siam8877", "", 1170, 0, 12, 1170, 0, 3, 1170, 0, 8),
+                    LeaderboardPlayer("tp_3", "tarikul4488051", "", 1059, 0, 10, 1059, 0, 3, 1059, 0, 7),
+                    LeaderboardPlayer("tp_4", "Fxjud", "", 880, 0, 11, 880, 0, 11, 880, 0, 11),
+                    LeaderboardPlayer("tp_5", "DibboSaha", "", 810, 0, 15, 810, 0, 15, 810, 0, 15),
+                    LeaderboardPlayer("tp_6", "Painxx3", "", 712, 8, 17, 712, 8, 17, 712, 8, 17),
+                    LeaderboardPlayer("tp_7", "Sourav1234", "", 640, 2, 9, 640, 2, 9, 640, 2, 9),
+                    LeaderboardPlayer("tp_8", "Niboxo", "", 635, 75, 12, 635, 75, 12, 635, 75, 12),
+                    LeaderboardPlayer("tp_9", "samioul", "", 602, 1, 12, 602, 1, 12, 602, 1, 12)
+                )
+                val tpRoot = JSONObject()
+                for (tp in defaultTop) {
+                    val item = JSONObject().apply {
+                        put("name", tp.name)
+                        put("avatarUrl", tp.avatarUrl)
+                        put("wonAmount", tp.wonAmount)
+                        put("kills", tp.kills)
+                        put("matchesPlayed", tp.matchesPlayed)
+                        put("dailyWon", tp.dailyWon)
+                        put("dailyKills", tp.dailyKills)
+                        put("dailyMatches", tp.dailyMatches)
+                        put("weeklyWon", tp.weeklyWon)
+                        put("weeklyKills", tp.weeklyKills)
+                        put("weeklyMatches", tp.weeklyMatches)
+                    }
+                    tpRoot.put(tp.id, item)
+                }
+                putJson("top_players", tpRoot, authToken)
+            }
         } catch (e: Exception) {
             Log.w("FirebaseRestClient", "seedInitialDatabaseIfNeeded failed: ${e.message}")
         }
+    }
+
+    suspend fun fetchLeaderboardPlayers(
+        matches: List<MatchEntity>,
+        participants: List<ParticipantEntity>
+    ): List<LeaderboardPlayer> = withContext(Dispatchers.IO) {
+        val playerMap = linkedMapOf<String, LeaderboardPlayer>()
+        val now = System.currentTimeMillis()
+        val oneDayMs = 24 * 3600_000L
+        val oneWeekMs = 7 * oneDayMs
+        val matchMap = matches.associateBy { it.dbKey }
+
+        // 1. Read explicit /top_players (or /leaderboard) node from Firebase RTDB
+        val tpJson = getJson("top_players") ?: getJson("leaderboard")
+        if (tpJson != null) {
+            val keys = tpJson.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = tpJson.optJSONObject(k) ?: continue
+                val name = v.optString("name", "")
+                    .ifBlank { v.optString("username", "") }
+                    .ifBlank { v.optString("ign", "") }
+                    .trim()
+                if (name.isBlank()) continue
+                val avatar = v.optString("avatarUrl", "")
+                    .ifBlank { v.optString("photoUrl", "") }
+                    .ifBlank { v.optString("img", "") }
+                val won = v.optInt("wonAmount", v.optInt("winning", v.optInt("won", 0)))
+                val kills = v.optInt("kills", 0)
+                val matchesCount = v.optInt("matchesPlayed", v.optInt("matches", 0))
+                val dWon = v.optInt("dailyWon", won)
+                val dKills = v.optInt("dailyKills", kills)
+                val dMatches = v.optInt("dailyMatches", matchesCount)
+                val wWon = v.optInt("weeklyWon", won)
+                val wKills = v.optInt("weeklyKills", kills)
+                val wMatches = v.optInt("weeklyMatches", matchesCount)
+                val normKey = name.lowercase()
+                playerMap[normKey] = LeaderboardPlayer(
+                    id = k,
+                    name = name,
+                    avatarUrl = avatar,
+                    wonAmount = won,
+                    kills = kills,
+                    matchesPlayed = matchesCount,
+                    dailyWon = dWon,
+                    dailyKills = dKills,
+                    dailyMatches = dMatches,
+                    weeklyWon = wWon,
+                    weeklyKills = wKills,
+                    weeklyMatches = wMatches
+                )
+            }
+        }
+
+        // 2. Read live /users from Firebase RTDB and combine with match_participants
+        val usersJson = getJson("users")
+        if (usersJson != null) {
+            val uKeys = usersJson.keys()
+            while (uKeys.hasNext()) {
+                val uid = uKeys.next()
+                val uObj = usersJson.optJSONObject(uid) ?: continue
+                val uname = uObj.optString("username", "")
+                    .ifBlank { uObj.optString("email", "").substringBefore("@") }
+                    .trim()
+                if (uname.isBlank()) continue
+                val photoUrl = uObj.optString("photoUrl", "")
+                val userWin = uObj.optDouble("winning", 0.0).toInt()
+                val userKillsField = uObj.optInt("kills", 0)
+                val userMatchesField = uObj.optInt("matchesPlayed", uObj.optInt("matches", 0))
+
+                val userParts = participants.filter {
+                    it.joinedBy == uid || it.ign.equals(uname, ignoreCase = true)
+                }
+                val partWinTotal = userParts.sumOf { it.win }
+                val partKillsTotal = userParts.sumOf { it.kills }
+                val partMatchesTotal = userParts.size
+
+                val dailyParts = userParts.filter { p ->
+                    val mTime = matchMap[p.matchKey]?.timestamp ?: now
+                    kotlin.math.abs(now - mTime) <= oneDayMs
+                }
+                val weeklyParts = userParts.filter { p ->
+                    val mTime = matchMap[p.matchKey]?.timestamp ?: now
+                    kotlin.math.abs(now - mTime) <= oneWeekMs
+                }
+
+                val normKey = uname.lowercase()
+                val existing = playerMap[normKey]
+                val totalWon = maxOf(userWin, partWinTotal, existing?.wonAmount ?: 0)
+                val totalKills = maxOf(userKillsField, partKillsTotal, existing?.kills ?: 0)
+                val totalMatches = maxOf(userMatchesField, partMatchesTotal, existing?.matchesPlayed ?: 0)
+
+                if (totalWon > 0 || totalKills > 0 || totalMatches > 0 || existing != null) {
+                    val dWon = maxOf(userWin, dailyParts.sumOf { it.win }, existing?.dailyWon ?: 0)
+                    val dKills = maxOf(userKillsField, dailyParts.sumOf { it.kills }, existing?.dailyKills ?: 0)
+                    val dMatches = maxOf(userMatchesField, dailyParts.size, existing?.dailyMatches ?: 0, if (totalMatches > 0) 1 else 0)
+
+                    val wWon = maxOf(userWin, weeklyParts.sumOf { it.win }, existing?.weeklyWon ?: 0)
+                    val wKills = maxOf(userKillsField, weeklyParts.sumOf { it.kills }, existing?.weeklyKills ?: 0)
+                    val wMatches = maxOf(userMatchesField, weeklyParts.size, existing?.weeklyMatches ?: 0, totalMatches)
+
+                    playerMap[normKey] = LeaderboardPlayer(
+                        id = existing?.id ?: uid,
+                        name = existing?.name ?: uname,
+                        avatarUrl = photoUrl.ifBlank { existing?.avatarUrl ?: "" },
+                        wonAmount = totalWon,
+                        kills = totalKills,
+                        matchesPlayed = totalMatches,
+                        dailyWon = dWon,
+                        dailyKills = dKills,
+                        dailyMatches = dMatches,
+                        weeklyWon = wWon,
+                        weeklyKills = wKills,
+                        weeklyMatches = wMatches
+                    )
+                }
+            }
+        }
+
+        // 3. Also aggregate any match_participants whose IGN wasn't already matched in /users
+        val groupedByIgn = participants
+            .filter { it.ign.isNotBlank() }
+            .groupBy { it.ign.trim().lowercase() }
+        for ((normIgn, pList) in groupedByIgn) {
+            val existing = playerMap[normIgn]
+            val displayIgn = existing?.name ?: pList.first().ign.trim()
+            val pWin = pList.sumOf { it.win }
+            val pKills = pList.sumOf { it.kills }
+            val pMatches = pList.size
+            if (pWin <= 0 && pKills <= 0 && existing == null) continue
+
+            val totalWon = maxOf(pWin, existing?.wonAmount ?: 0)
+            val totalKills = maxOf(pKills, existing?.kills ?: 0)
+            val totalMatches = maxOf(pMatches, existing?.matchesPlayed ?: 0)
+
+            playerMap[normIgn] = LeaderboardPlayer(
+                id = existing?.id ?: "part_$normIgn",
+                name = displayIgn,
+                avatarUrl = existing?.avatarUrl ?: "",
+                wonAmount = totalWon,
+                kills = totalKills,
+                matchesPlayed = totalMatches,
+                dailyWon = maxOf(pWin, existing?.dailyWon ?: 0),
+                dailyKills = maxOf(pKills, existing?.dailyKills ?: 0),
+                dailyMatches = maxOf(pMatches, existing?.dailyMatches ?: 0),
+                weeklyWon = maxOf(pWin, existing?.weeklyWon ?: 0),
+                weeklyKills = maxOf(pKills, existing?.weeklyKills ?: 0),
+                weeklyMatches = maxOf(pMatches, existing?.weeklyMatches ?: 0)
+            )
+        }
+
+        playerMap.values.sortedWith(
+            compareByDescending<LeaderboardPlayer> { it.wonAmount }
+                .thenByDescending { it.kills }
+                .thenByDescending { it.matchesPlayed }
+        )
     }
 
     suspend fun fetchCategories(): List<CategoryEntity> = withContext(Dispatchers.IO) {
@@ -962,13 +1219,21 @@ class FirebaseRestClient {
         withContext(Dispatchers.IO) {
             val uid = user.uid
             val idToken = user.idToken
-            val txRoot = getJson("transactions/$uid", idToken) ?: JSONObject()
-            val depReqRoot = getJson("deposit_requests", idToken)
-            val autoPayRoot = getJson("Auto Pay", idToken)
-            val wdReqRoot = getJson("withdraw_requests", idToken)
+            val txRoot = getJson("transactions/$uid", idToken) ?: return@withContext emptyList()
+            if (txRoot.length() == 0) return@withContext emptyList()
+
+            var depReqRoot: JSONObject? = null
+            var autoPayRoot: JSONObject? = null
+            var depFetched = false
+
+            var wdReqRoot: JSONObject? = null
+            var wdAltRoot: JSONObject? = null
+            var wdFetched = false
 
             var totalNewlyCredited = 0.0
             var totalNewlyDebited = 0.0
+            var totalNewlyRefundedDep = 0.0
+            var totalNewlyRefundedWin = 0.0
             val list = mutableListOf<TransactionEntity>()
             val keys = txRoot.keys()
             while (keys.hasNext()) {
@@ -984,6 +1249,11 @@ class FirebaseRestClient {
                 var credited = v.optBoolean("credited", false)
 
                 if (type.contains("Deposit", ignoreCase = true)) {
+                    if (!depFetched) {
+                        depReqRoot = getJson("deposit_requests", idToken)
+                        autoPayRoot = getJson("Auto Pay", idToken)
+                        depFetched = true
+                    }
                     val depItem = depReqRoot?.optJSONObject(k) ?: depReqRoot?.optJSONObject(txId)
                     val autoItem = autoPayRoot?.optJSONObject(k) ?: autoPayRoot?.optJSONObject(txId)
 
@@ -1032,18 +1302,38 @@ class FirebaseRestClient {
                         patchJson("Auto Pay/$txId", updateObj, idToken)
                     }
                 } else if (type.contains("Withdraw", ignoreCase = true)) {
+                    if (!wdFetched) {
+                        wdReqRoot = getJson("withdraw_requests", idToken)
+                        wdAltRoot = getJson("withdraw", idToken)
+                        wdFetched = true
+                    }
                     val wdItem = wdReqRoot?.optJSONObject(k) ?: wdReqRoot?.optJSONObject(txId)
+                    val wdAltItem = wdAltRoot?.optJSONObject(k) ?: wdAltRoot?.optJSONObject(txId)
                     val wdStatus = wdItem?.optString("status", "") ?: ""
-                    val debited = v.optBoolean("debited", false)
-                    val alreadyDebitedAnywhere = debited || (wdItem?.optBoolean("debited", false) == true)
+                    val wdAltStatus = wdAltItem?.optString("status", "") ?: ""
+                    val debited = v.optBoolean("debited", true)
+                    val alreadyDebitedAnywhere = debited ||
+                            (wdItem?.optBoolean("debited", false) == true) ||
+                            (wdAltItem?.optBoolean("debited", false) == true)
+                    val alreadyRefundedAnywhere = v.optBoolean("refunded", false) ||
+                            (wdItem?.optBoolean("refunded", false) == true) ||
+                            (wdAltItem?.optBoolean("refunded", false) == true)
 
-                    val approvedAnywhere = isApprovedStatus(status) || isApprovedStatus(wdStatus)
-                    val rejectedAnywhere = !approvedAnywhere && (isRejectedStatus(status) || isRejectedStatus(wdStatus))
+                    val approvedAnywhere = isApprovedStatus(status) ||
+                            isApprovedStatus(wdStatus) ||
+                            isApprovedStatus(wdAltStatus)
+                    val rejectedAnywhere = !approvedAnywhere && (
+                            isRejectedStatus(status) ||
+                                    isRejectedStatus(wdStatus) ||
+                                    isRejectedStatus(wdAltStatus)
+                            )
 
                     if (approvedAnywhere) {
                         status = "Approved"
                         if (!alreadyDebitedAnywhere && amount > 0.0) {
                             totalNewlyDebited += amount
+                        }
+                        if (!isApprovedStatus(v.optString("status", "")) || !alreadyDebitedAnywhere) {
                             val updateObj = JSONObject().apply {
                                 put("status", "Approved")
                                 put("debited", true)
@@ -1051,20 +1341,42 @@ class FirebaseRestClient {
                             }
                             patchJson("transactions/$uid/$k", updateObj, idToken)
                             patchJson("withdraw_requests/$txId", updateObj, idToken)
-                        } else if (!isApprovedStatus(v.optString("status", ""))) {
+                            patchJson("withdraw/$txId", updateObj, idToken)
+                        }
+                    } else if (rejectedAnywhere) {
+                        status = "Rejected"
+                        if (!alreadyRefundedAnywhere && amount > 0.0) {
+                            val dedDep = v.optDouble(
+                                "deductedFromDep",
+                                wdItem?.optDouble("deductedFromDep", 0.0) ?: 0.0
+                            )
+                            val dedWin = v.optDouble(
+                                "deductedFromWin",
+                                wdItem?.optDouble("deductedFromWin", 0.0) ?: 0.0
+                            )
+                            if (dedDep + dedWin > 0.0) {
+                                totalNewlyRefundedDep += dedDep
+                                totalNewlyRefundedWin += dedWin
+                            } else {
+                                totalNewlyRefundedWin += amount
+                            }
                             val updateObj = JSONObject().apply {
-                                put("status", "Approved")
-                                put("debited", true)
+                                put("status", "Rejected")
+                                put("refunded", true)
+                                put("rejectedAt", System.currentTimeMillis())
                             }
                             patchJson("transactions/$uid/$k", updateObj, idToken)
+                            patchJson("withdraw_requests/$txId", updateObj, idToken)
+                            patchJson("withdraw/$txId", updateObj, idToken)
+                        } else if (!isRejectedStatus(v.optString("status", ""))) {
+                            val updateObj = JSONObject().apply {
+                                put("status", "Rejected")
+                                put("refunded", true)
+                            }
+                            patchJson("transactions/$uid/$k", updateObj, idToken)
+                            patchJson("withdraw_requests/$txId", updateObj, idToken)
+                            patchJson("withdraw/$txId", updateObj, idToken)
                         }
-                    } else if (rejectedAnywhere && status != "Rejected") {
-                        status = "Rejected"
-                        val updateObj = JSONObject().apply {
-                            put("status", "Rejected")
-                        }
-                        patchJson("transactions/$uid/$k", updateObj, idToken)
-                        patchJson("withdraw_requests/$txId", updateObj, idToken)
                     }
                 }
 
@@ -1083,12 +1395,12 @@ class FirebaseRestClient {
                 )
             }
 
-            if (totalNewlyCredited > 0.0 || totalNewlyDebited > 0.0) {
+            if (totalNewlyCredited > 0.0 || totalNewlyDebited > 0.0 || totalNewlyRefundedDep > 0.0 || totalNewlyRefundedWin > 0.0) {
                 val remoteUserObj = getJson("users/$uid", idToken)
                 val currentRemoteDeposit = remoteUserObj?.optDouble("deposit", user.deposit) ?: user.deposit
                 val currentRemoteWinning = remoteUserObj?.optDouble("winning", user.winning) ?: user.winning
-                val updatedDeposit = currentRemoteDeposit + totalNewlyCredited
-                val updatedWinning = maxOf(0.0, currentRemoteWinning - totalNewlyDebited)
+                val updatedDeposit = currentRemoteDeposit + totalNewlyCredited + totalNewlyRefundedDep
+                val updatedWinning = maxOf(0.0, currentRemoteWinning - totalNewlyDebited + totalNewlyRefundedWin)
                 syncUserBalance(uid, updatedDeposit, updatedWinning, idToken)
 
                 // If user was referred by someone's promoCode and deposited >= 100 TK for the first time, credit 10 TK to referrer
@@ -1177,26 +1489,42 @@ class FirebaseRestClient {
             putJson("transactions/${user.uid}/${tx.id}", payload, user.idToken)
         }
 
-    suspend fun pushWithdrawRequest(user: UserEntity, tx: TransactionEntity) =
+    suspend fun pushWithdrawRequest(
+        user: UserEntity,
+        tx: TransactionEntity,
+        deductedFromDep: Double,
+        deductedFromWin: Double
+    ): Boolean =
         withContext(Dispatchers.IO) {
             val payload = JSONObject().apply {
                 put("id", tx.id)
                 put("txID", tx.txId)
+                put("trxId", tx.txId)
                 put("uid", user.uid)
+                put("userId", user.uid)
                 put("username", user.username)
+                put("name", user.username)
                 put("email", user.email)
                 put("phone", user.phone)
                 put("type", tx.type)
                 put("amount", tx.amount)
                 put("number", tx.number)
+                put("accountNumber", tx.number)
+                put("receiverNumber", tx.number)
                 put("method", tx.method)
+                put("paymentMethod", tx.method)
                 put("status", "Pending")
-                put("debited", false)
+                put("debited", true)
+                put("refunded", false)
+                put("deductedFromDep", deductedFromDep)
+                put("deductedFromWin", deductedFromWin)
                 put("date", tx.date)
                 put("timestamp", System.currentTimeMillis())
             }
-            putJson("transactions/${user.uid}/${tx.id}", payload, user.idToken)
-            putJson("withdraw_requests/${tx.id}", payload, user.idToken)
+            val ok1 = putJson("transactions/${user.uid}/${tx.id}", payload, user.idToken)
+            val ok2 = putJson("withdraw_requests/${tx.id}", payload, user.idToken)
+            val ok3 = putJson("withdraw/${tx.id}", payload, user.idToken)
+            ok1 || ok2 || ok3
         }
 
     suspend fun pushParticipantAndCount(

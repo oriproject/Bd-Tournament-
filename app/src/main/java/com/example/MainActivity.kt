@@ -22,6 +22,7 @@ import com.example.ui.TournamentViewModel
 import com.example.ui.components.AllPopupsAndModals
 import com.example.ui.components.SplashScreenView
 import com.example.ui.screens.AddMoneyScreen
+import com.example.ui.screens.AllRulesScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.CategoryMatchesScreen
 import com.example.ui.screens.EditProfileScreen
@@ -32,6 +33,7 @@ import com.example.ui.screens.MatchDetailsScreen
 import com.example.ui.screens.NotificationsScreen
 import com.example.ui.screens.ReferScreen
 import com.example.ui.screens.ResultDetailsScreen
+import com.example.ui.screens.TopPlayersScreen
 import com.example.ui.screens.WalletScreen
 import com.example.ui.screens.WithdrawScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -74,7 +76,7 @@ fun BdTournamentApp() {
     val notifications by viewModel.notifications.collectAsStateWithLifecycle()
     val userTransactions by viewModel.userTransactions.collectAsStateWithLifecycle()
     val appSettings by viewModel.appSettings.collectAsStateWithLifecycle()
-    val currentTimeMillis by viewModel.currentTimeMillis.collectAsStateWithLifecycle()
+    val leaderboardPlayers by viewModel.leaderboardPlayers.collectAsStateWithLifecycle()
 
     val showStartupModal by viewModel.showStartupModal.collectAsStateWithLifecycle()
     val prizeModalMatch by viewModel.prizeModalMatch.collectAsStateWithLifecycle()
@@ -114,6 +116,11 @@ fun BdTournamentApp() {
             else -> {
                 when (val curSub = subScreen) {
                     SubScreen.None -> {
+                        val timerMillis = if (activeTab == MainTab.MY_MATCHES) {
+                            viewModel.currentTimeMillis.collectAsStateWithLifecycle().value
+                        } else {
+                            0L
+                        }
                         MainTabsContainer(
                             activeTab = activeTab,
                             onSelectTab = viewModel::selectTab,
@@ -123,7 +130,7 @@ fun BdTournamentApp() {
                             joinedMatchKeys = joinedMatchKeys,
                             currentUser = currentUser,
                             notifCount = notifications.size,
-                            currentTimeMillis = currentTimeMillis,
+                            currentTimeMillis = timerMillis,
                             onOpenCategory = viewModel::openCategory,
                             onOpenMatchDetails = { key -> viewModel.navigateSub(SubScreen.MatchDetails(key)) },
                             onOpenResultDetails = { key -> viewModel.navigateSub(SubScreen.ResultDetails(key)) },
@@ -135,6 +142,7 @@ fun BdTournamentApp() {
                         )
                     }
                     is SubScreen.CategoryMatches -> {
+                        val currentTimeMillis by viewModel.currentTimeMillis.collectAsStateWithLifecycle()
                         CategoryMatchesScreen(
                             categoryId = curSub.categoryId,
                             categories = categories,
@@ -154,6 +162,7 @@ fun BdTournamentApp() {
                         )
                     }
                     is SubScreen.MatchDetails -> {
+                        val currentTimeMillis by viewModel.currentTimeMillis.collectAsStateWithLifecycle()
                         val m = matches.find { it.dbKey == curSub.matchKey }
                         MatchDetailsScreen(
                             match = m,
@@ -199,6 +208,7 @@ fun BdTournamentApp() {
                     SubScreen.Withdraw -> {
                         WithdrawScreen(
                             user = currentUser,
+                            transactions = userTransactions,
                             selectedMethod = selectedWithdrawMethod,
                             onSelectMethod = viewModel::setWithdrawMethod,
                             onSubmitWithdraw = viewModel::submitWithdraw,
@@ -228,6 +238,19 @@ fun BdTournamentApp() {
                         EditProfileScreen(
                             user = currentUser,
                             onSaveProfile = viewModel::saveProfile,
+                            onBack = viewModel::navigateBack
+                        )
+                    }
+                    SubScreen.AllRules -> {
+                        AllRulesScreen(
+                            categories = categories,
+                            matches = matches,
+                            onBack = viewModel::navigateBack
+                        )
+                    }
+                    SubScreen.TopPlayers -> {
+                        TopPlayersScreen(
+                            players = leaderboardPlayers,
                             onBack = viewModel::navigateBack
                         )
                     }

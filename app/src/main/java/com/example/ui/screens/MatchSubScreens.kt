@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +45,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -302,7 +304,7 @@ fun MatchDetailsScreen(
                     .testTag("match_description_section")
             ) {
                 Text(
-                    text = "Match Description",
+                    text = "Match Instructions and Rules",
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 15.sp,
                     color = TextWhite,
@@ -607,6 +609,7 @@ fun JoinMatchScreen(
     onConfirmJoin: (MatchEntity, List<String>) -> Unit
 ) {
     if (match == null) return
+    val focusManager = LocalFocusManager.current
 
     // Always 1 slot per user regardless of Solo / Duo / Squad / 2v2 / 4v4
     val playerNames = remember(match.dbKey) {
@@ -617,6 +620,7 @@ fun JoinMatchScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(BgDark)
+            .imePadding()
             .testTag("join_match_screen")
     ) {
         Column(
@@ -625,7 +629,13 @@ fun JoinMatchScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 90.dp)
         ) {
-            SubPageTopBar(title = "Match Joining", onBack = onBack)
+            SubPageTopBar(
+                title = "Match Joining",
+                onBack = {
+                    focusManager.clearFocus()
+                    onBack()
+                }
+            )
 
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -747,7 +757,10 @@ fun JoinMatchScreen(
 
         // Fixed Bottom Join Now! Button
         Button(
-            onClick = { onConfirmJoin(match, playerNames.toList()) },
+            onClick = {
+                focusManager.clearFocus()
+                onConfirmJoin(match, playerNames.toList())
+            },
             shape = RoundedCornerShape(30.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = EsportsOrange,

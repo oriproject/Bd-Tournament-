@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MonetizationOn
@@ -64,6 +66,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -73,6 +76,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.isSameDayAsToday
 import com.example.data.local.AppSettingsData
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserEntity
@@ -423,6 +427,7 @@ fun AddMoneyScreen(
     onBack: () -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
+    val focusManager = LocalFocusManager.current
     var amountInput by remember(currentMethod) { mutableStateOf("") }
     var senderNumber by remember(currentMethod) { mutableStateOf("") }
     var trxId by remember(currentMethod) { mutableStateOf("") }
@@ -439,9 +444,16 @@ fun AddMoneyScreen(
             .background(BgDark)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
+            .imePadding()
             .testTag("add_money_screen")
     ) {
-        SubPageTopBar(title = "Add Money", onBack = onBack)
+        SubPageTopBar(
+            title = "Add Money",
+            onBack = {
+                focusManager.clearFocus()
+                onBack()
+            }
+        )
 
         // 3 Method Cards
         Row(
@@ -667,7 +679,10 @@ fun AddMoneyScreen(
             Spacer(modifier = Modifier.height(15.dp))
 
             Button(
-                onClick = { onVerify(trxId, amountInput, senderNumber) },
+                onClick = {
+                    focusManager.clearFocus()
+                    onVerify(trxId, amountInput, senderNumber)
+                },
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = boxColor),
                 modifier = Modifier
@@ -788,14 +803,24 @@ private fun BulletInstruction(
 @Composable
 fun WithdrawScreen(
     user: UserEntity?,
+    transactions: List<TransactionEntity> = emptyList(),
     selectedMethod: String,
     onSelectMethod: (String) -> Unit,
     onSubmitWithdraw: (String, String) -> Unit,
     onBack: () -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
     var mobileNumber by remember { mutableStateOf("") }
     var amountStr by remember { mutableStateOf("") }
-    val winningAvailable = user?.winning?.toInt() ?: 0
+    val winningAvailable = (user?.winning?.toInt() ?: 0) + (user?.deposit?.toInt() ?: 0)
+    val todayWithdrawCount = remember(transactions, user?.uid) {
+        transactions.count { tx ->
+            (user == null || tx.uid == user.uid) &&
+                tx.type.contains("Withdraw", ignoreCase = true) &&
+                !tx.status.equals("Rejected", ignoreCase = true) &&
+                isSameDayAsToday(tx.date)
+        }.coerceIn(0, 1)
+    }
 
     Column(
         modifier = Modifier
@@ -803,9 +828,17 @@ fun WithdrawScreen(
             .background(BgDark)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
+            .imePadding()
             .testTag("withdraw_screen")
     ) {
-        SubPageTopBar(title = "Withdraw Money", darkMode = true, onBack = onBack)
+        SubPageTopBar(
+            title = "Withdraw Money",
+            darkMode = true,
+            onBack = {
+                focusManager.clearFocus()
+                onBack()
+            }
+        )
 
         Column(modifier = Modifier.padding(20.dp)) {
             // Balance Card
@@ -831,7 +864,7 @@ fun WithdrawScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Available Winning Balance",
+                        text = "Available Balance",
                         color = TextMuted,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
@@ -842,6 +875,95 @@ fun WithdrawScreen(
                         color = EsportsOrange,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black
+                    )
+                }
+            }
+
+            // Daily Withdraw Limit Box (1 Withdraw per Day)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 20.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(Color(0xFF4F46E5), Color(0xFF7C3AED))
+                        )
+                    )
+                    .padding(horizontal = 18.dp, vertical = 16.dp)
+                    .testTag("withdraw_limit_card")
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "আজকের উইথড্র লিমিট",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(Color.White.copy(alpha = 0.22f))
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                                .testTag("withdraw_limit_badge")
+                        ) {
+                            Text(
+                                text = if (todayWithdrawCount >= 1) "১ / ১ বার" else "০ / ১ বার",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Progress Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.White.copy(alpha = 0.28f))
+                    ) {
+                        if (todayWithdrawCount >= 1) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color(0xFFFFD54F))
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = if (todayWithdrawCount >= 1) {
+                            "আজকের উইথড্র লিমিট শেষ (দিনে সর্বোচ্চ ১ বার)"
+                        } else {
+                            "আজ আরও ১ বার উইথড্র করতে পারবেন"
+                        },
+                        color = Color.White.copy(alpha = 0.95f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.testTag("withdraw_limit_status_text")
                     )
                 }
             }
@@ -1021,7 +1143,7 @@ fun WithdrawScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "MINIMUM WITHDRAW 100 TK",
+                            text = "MINIMUM WITHDRAW 80 TK",
                             color = EsportsGold,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -1031,7 +1153,10 @@ fun WithdrawScreen(
                     Spacer(modifier = Modifier.height(18.dp))
 
                     Button(
-                        onClick = { onSubmitWithdraw(mobileNumber, amountStr) },
+                        onClick = {
+                            focusManager.clearFocus()
+                            onSubmitWithdraw(mobileNumber, amountStr)
+                        },
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = EsportsOrange,

@@ -4,21 +4,26 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.TournamentRepository
+import com.example.data.isSameDayAsToday
 import com.example.data.local.AppSettingsData
 import com.example.data.local.CategoryEntity
+import com.example.data.local.LeaderboardPlayer
 import com.example.data.local.MatchEntity
 import com.example.data.local.NotificationEntity
 import com.example.data.local.ParticipantEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -39,6 +44,8 @@ sealed class SubScreen {
     data object Notifications : SubScreen()
     data object Refer : SubScreen()
     data object EditProfile : SubScreen()
+    data object AllRules : SubScreen()
+    data object TopPlayers : SubScreen()
 }
 
 enum class AlertType {
@@ -58,26 +65,35 @@ class TournamentViewModel(
 ) : ViewModel() {
 
     val categories: StateFlow<List<CategoryEntity>> = repository.categories
+        .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val matches: StateFlow<List<MatchEntity>> = repository.matches
+        .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val participants: StateFlow<List<ParticipantEntity>> = repository.participants
+        .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val notifications: StateFlow<List<NotificationEntity>> = repository.notifications
+        .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val currentUser: StateFlow<UserEntity?> = repository.activeUser
+        .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val appSettings: StateFlow<AppSettingsData> = repository.appSettings
 
+    val leaderboardPlayers: StateFlow<List<LeaderboardPlayer>> = repository.leaderboardPlayers
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val userTransactions: StateFlow<List<TransactionEntity>> = currentUser
-        .flatMapLatest { user ->
-            if (user != null) repository.getTransactionsForUser(user.uid) else flowOf(emptyList())
+        .map { it?.uid }
+        .distinctUntilChanged()
+        .flatMapLatest { uid ->
+            if (uid != null) repository.getTransactionsForUser(uid).distinctUntilChanged() else flowOf(emptyList())
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -127,7 +143,7 @@ class TournamentViewModel(
     val currentTimeMillis: StateFlow<Long> = _currentTimeMillis.asStateFlow()
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             repository.initializeAndSync()
         }
         viewModelScope.launch {
@@ -144,9 +160,9 @@ class TournamentViewModel(
             }
         }
         // Live periodic sync with Firebase Realtime Database so Admin Panel updates reflect automatically
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             while (true) {
-                delay(4000L)
+                delay(5000L)
                 try {
                     repository.syncLiveFromFirebase()
                 } catch (_: Exception) {
@@ -166,6 +182,14 @@ class TournamentViewModel(
 
     fun navigateSub(screen: SubScreen) {
         _subScreen.value = screen
+        if (screen is SubScreen.TopPlayers || screen is SubScreen.AllRules) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    repository.syncLiveFromFirebase()
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 
     fun navigateBack() {
@@ -178,7 +202,7 @@ class TournamentViewModel(
                 }
             }
             is SubScreen.Wallet, is SubScreen.Notifications, is SubScreen.Refer,
-            is SubScreen.EditProfile -> {
+            is SubScreen.EditProfile, is SubScreen.AllRules, is SubScreen.TopPlayers -> {
                 _subScreen.value = SubScreen.None
                 _activeTab.value = MainTab.PROFILE
             }
@@ -459,6 +483,20 @@ class TournamentViewModel(
 
     fun submitWithdraw(number: String, amountStr: String) {
         val user = currentUser.value ?: return
+        val alreadyWithdrawnToday = userTransactions.value.any { tx ->
+            tx.uid == user.uid &&
+                tx.type.contains("Withdraw", ignoreCase = true) &&
+                !tx.status.equals("Rejected", ignoreCase = true) &&
+                isSameDayAsToday(tx.date)
+        }
+        if (alreadyWithdrawnToday) {
+            _alertMessage.value = AlertMessage(
+                type = AlertType.WARNING,
+                title = "উইথড্র লিমিট শেষ!",
+                message = "আপনি দিনে সর্বোচ্চ ১ বার উইথড্র করতে পারবেন! আপনার আজকের উইথড্র লিমিট (১ / ১ বার) শেষ হয়েছে, অনুগ্রহ করে আগামীকাল চেষ্টা করুন।"
+            )
+            return
+        }
         val amount = amountStr.trim().toDoubleOrNull()
         if (number.isBlank() || amount == null || amount <= 0.0) {
             _alertMessage.value = AlertMessage(

@@ -81,6 +81,29 @@ data class BannerItem(
     val link: String = ""
 )
 
+data class LeaderboardPlayer(
+    val id: String,
+    val name: String,
+    val avatarUrl: String = "",
+    val wonAmount: Int = 0,
+    val kills: Int = 0,
+    val matchesPlayed: Int = 0,
+    val dailyWon: Int = 0,
+    val dailyKills: Int = 0,
+    val dailyMatches: Int = 0,
+    val weeklyWon: Int = 0,
+    val weeklyKills: Int = 0,
+    val weeklyMatches: Int = 0
+)
+
+fun resolveMatchInstructionsAndRules(match: MatchEntity): String {
+    return when {
+        match.matchDesc.isNotBlank() -> match.matchDesc
+        match.prizeDesc.isNotBlank() -> match.prizeDesc
+        else -> "• অবশ্যই আপনার সঠিক গেম আইডি (Game ID Name) দিয়ে জয়েন করবেন।\n• ম্যাচ শুরু হওয়ার ১০ মিনিট আগে Room ID এবং Password দেওয়া হবে।\n• যেকোনো ধরনের হ্যাক, প্যানেল বা টিমিং করলে একাউন্ট সাসপেন্ড করা হবে।"
+    }
+}
+
 data class AppSettingsData(
     val appName: String = "Bd Tournament",
     val appLogo: String = "https://cdn-icons-png.flaticon.com/512/149/149071.png",

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -59,8 +60,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -212,23 +218,23 @@ private fun HomeTabView(
     onOpenNotifications: () -> Unit
 ) {
     val context = LocalContext.current
-    val banners = appSettings.banners.ifEmpty {
-        listOf(
-            com.example.data.local.BannerItem("local_hero", appSettings.supportLink),
-            com.example.data.local.BannerItem("local_shop", appSettings.shopLink)
-        )
-    }
+    val banners = appSettings.banners
     val pagerState = rememberPagerState(pageCount = { banners.size })
 
     val totalBalance = ((currentUser?.deposit ?: 0.0) + (currentUser?.winning ?: 0.0)).toInt()
     val liveAndUpcomingCount = matches.count { it.status != "Finished" }
 
     LaunchedEffect(banners.size) {
+        if (banners.isNotEmpty() && pagerState.currentPage >= banners.size) {
+            pagerState.scrollToPage(0)
+        }
         if (banners.size > 1) {
             while (true) {
                 delay(3000L)
-                val next = (pagerState.currentPage + 1) % banners.size
-                pagerState.animateScrollToPage(next)
+                if (banners.size > 1) {
+                    val next = (pagerState.currentPage + 1) % banners.size
+                    pagerState.animateScrollToPage(next)
+                }
             }
         }
     }
@@ -336,118 +342,87 @@ private fun HomeTabView(
             }
         }
 
-        // Rounded Hero Banner Slider
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-        ) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = CardDark),
-                border = BorderStroke(1.dp, CardBorderDark),
-                modifier = Modifier.fillMaxWidth()
+        // Rounded Hero Banner Slider (only shown if banners exist in Firebase / Admin Panel)
+        if (banners.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardDark),
+                    border = BorderStroke(1.dp, CardBorderDark),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.fillMaxSize()
-                    ) { page ->
-                        val banner = banners[page]
-                        val mod = Modifier
-                            .fillMaxSize()
-                            .clickable {
-                                if (banner.link.isNotBlank()) {
-                                    openExternalUrl(context, banner.link)
-                                }
-                            }
-                        if (banner.img == "local_hero") {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_hero_tournament),
-                                contentDescription = "Tournament Banner",
-                                modifier = mod,
-                                contentScale = ContentScale.Crop
-                            )
-                        } else if (banner.img == "local_shop") {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_category_br),
-                                contentDescription = "Esports Banner",
-                                modifier = mod,
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            AsyncImage(
-                                model = banner.img,
-                                contentDescription = "Banner",
-                                placeholder = painterResource(id = R.drawable.img_hero_tournament),
-                                error = painterResource(id = R.drawable.img_hero_tournament),
-                                modifier = mod,
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-                    }
-
-                    // Bottom Gradient Overlay with Title & Subtitle
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.Transparent,
-                                        Color.Black.copy(alpha = 0.85f)
-                                    )
-                                )
-                            )
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                            .aspectRatio(16f / 9f)
                     ) {
-                        Column {
-                            Text(
-                                text = "FREE FIRE PRO RUSH",
-                                color = EsportsGold,
-                                fontSize = 19.sp,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 0.5.sp
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Daily Solo & Squad Matches",
-                                color = TextWhite.copy(alpha = 0.9f),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize()
+                        ) { page ->
+                            val banner = banners.getOrNull(page) ?: return@HorizontalPager
+                            val mod = Modifier
+                                .fillMaxSize()
+                                .clickable {
+                                    if (banner.link.isNotBlank()) {
+                                        openExternalUrl(context, banner.link)
+                                    }
+                                }
+                            if (banner.img == "local_hero") {
+                                Image(
+                                    painter = painterResource(id = R.drawable.img_hero_tournament),
+                                    contentDescription = "Tournament Banner",
+                                    modifier = mod,
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else if (banner.img == "local_shop") {
+                                Image(
+                                    painter = painterResource(id = R.drawable.img_category_br),
+                                    contentDescription = "Esports Banner",
+                                    modifier = mod,
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                AsyncImage(
+                                    model = banner.img,
+                                    contentDescription = "Banner",
+                                    placeholder = painterResource(id = R.drawable.img_hero_tournament),
+                                    error = painterResource(id = R.drawable.img_hero_tournament),
+                                    modifier = mod,
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // Slider Dots
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                repeat(banners.size) { i ->
-                    val isSelected = pagerState.currentPage == i
-                    val dotWidth by animateDpAsState(
-                        targetValue = if (isSelected) 22.dp else 8.dp,
-                        label = "dotWidth"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .padding(horizontal = 4.dp)
-                            .width(dotWidth)
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (isSelected) EsportsOrange else Color(0xFF333D4F))
-                    )
+                // Slider Dots
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(banners.size) { i ->
+                        val isSelected = pagerState.currentPage == i
+                        val dotWidth by animateDpAsState(
+                            targetValue = if (isSelected) 22.dp else 8.dp,
+                            label = "dotWidth"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .width(dotWidth)
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) EsportsOrange else Color(0xFF333D4F))
+                        )
+                    }
                 }
             }
         }
@@ -883,6 +858,20 @@ private fun ProfileTabView(
                         onClick = { onNavigateSub(SubScreen.History) }
                     )
                     ProfileMenuItem(
+                        icon = Icons.Default.History,
+                        title = "All Rules",
+                        customIcon = { AllRulesMenuIcon() },
+                        testTag = "menu_all_rules",
+                        onClick = { onNavigateSub(SubScreen.AllRules) }
+                    )
+                    ProfileMenuItem(
+                        icon = Icons.Default.EmojiEvents,
+                        title = "Top Players",
+                        customIcon = { TopPlayersMenuIcon() },
+                        testTag = "menu_top_players",
+                        onClick = { onNavigateSub(SubScreen.TopPlayers) }
+                    )
+                    ProfileMenuItem(
                         icon = Icons.Default.Notifications,
                         title = "Notification",
                         badgeCount = notifCount,
@@ -912,12 +901,115 @@ private fun ProfileTabView(
 }
 
 @Composable
+private fun AllRulesMenuIcon() {
+    Canvas(modifier = Modifier.size(26.dp)) {
+        val w = size.width
+        val h = size.height
+        // Left page of open book (cyan/sky blue)
+        drawRoundRect(
+            color = Color(0xFF4FC3F7),
+            topLeft = Offset(0f, h * 0.12f),
+            size = Size(w * 0.48f, h * 0.76f),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+        )
+        // Right page of open book (slightly deeper sky blue)
+        drawRoundRect(
+            color = Color(0xFF29B6F6),
+            topLeft = Offset(w * 0.52f, h * 0.12f),
+            size = Size(w * 0.48f, h * 0.76f),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+        )
+        // Green checkmark on left page
+        val strokeW = 2.dp.toPx()
+        drawLine(
+            color = Color(0xFF00C853),
+            start = Offset(w * 0.12f, h * 0.36f),
+            end = Offset(w * 0.21f, h * 0.46f),
+            strokeWidth = strokeW,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color(0xFF00C853),
+            start = Offset(w * 0.21f, h * 0.46f),
+            end = Offset(w * 0.36f, h * 0.26f),
+            strokeWidth = strokeW,
+            cap = StrokeCap.Round
+        )
+        // Red X on right page
+        drawLine(
+            color = Color(0xFFE53935),
+            start = Offset(w * 0.64f, h * 0.27f),
+            end = Offset(w * 0.86f, h * 0.45f),
+            strokeWidth = strokeW,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color(0xFFE53935),
+            start = Offset(w * 0.86f, h * 0.27f),
+            end = Offset(w * 0.64f, h * 0.45f),
+            strokeWidth = strokeW,
+            cap = StrokeCap.Round
+        )
+        // Text lines on left & right pages
+        val lineCol = Color(0xFF0277BD)
+        drawLine(lineCol, Offset(w * 0.10f, h * 0.60f), Offset(w * 0.38f, h * 0.60f), 1.6.dp.toPx(), StrokeCap.Round)
+        drawLine(lineCol, Offset(w * 0.10f, h * 0.72f), Offset(w * 0.38f, h * 0.72f), 1.6.dp.toPx(), StrokeCap.Round)
+        drawLine(lineCol, Offset(w * 0.62f, h * 0.60f), Offset(w * 0.90f, h * 0.60f), 1.6.dp.toPx(), StrokeCap.Round)
+        drawLine(lineCol, Offset(w * 0.62f, h * 0.72f), Offset(w * 0.90f, h * 0.72f), 1.6.dp.toPx(), StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun TopPlayersMenuIcon() {
+    Canvas(modifier = Modifier.size(26.dp)) {
+        val w = size.width
+        val h = size.height
+        // Rounded square light-blue card
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                listOf(Color(0xFFBBDEFB), Color(0xFFE3F2FD))
+            ),
+            topLeft = Offset(w * 0.08f, h * 0.08f),
+            size = Size(w * 0.84f, h * 0.84f),
+            cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+        )
+        // Left & bottom axis border in blue
+        val axisColor = Color(0xFF42A5F5)
+        drawLine(
+            color = axisColor,
+            start = Offset(w * 0.12f, h * 0.12f),
+            end = Offset(w * 0.12f, h * 0.88f),
+            strokeWidth = 2.2.dp.toPx(),
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = axisColor,
+            start = Offset(w * 0.12f, h * 0.88f),
+            end = Offset(w * 0.88f, h * 0.88f),
+            strokeWidth = 2.2.dp.toPx(),
+            cap = StrokeCap.Round
+        )
+        // Rising trend zigzag line
+        val trendColor = Color(0xFF1E88E5)
+        val sw = 2.2.dp.toPx()
+        val p1 = Offset(w * 0.22f, h * 0.66f)
+        val p2 = Offset(w * 0.42f, h * 0.40f)
+        val p3 = Offset(w * 0.58f, h * 0.54f)
+        val p4 = Offset(w * 0.82f, h * 0.24f)
+        drawLine(trendColor, p1, p2, sw, StrokeCap.Round)
+        drawLine(trendColor, p2, p3, sw, StrokeCap.Round)
+        drawLine(trendColor, p3, p4, sw, StrokeCap.Round)
+    }
+}
+
+@Composable
 private fun ProfileMenuItem(
     icon: ImageVector,
     title: String,
     tint: Color = TextWhite,
     badgeCount: Int = 0,
     showDivider: Boolean = true,
+    customIcon: (@Composable () -> Unit)? = null,
     testTag: String,
     onClick: () -> Unit
 ) {
@@ -930,12 +1022,16 @@ private fun ProfileMenuItem(
                 .testTag(testTag),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = title,
-                tint = if (tint == DangerRed) DangerRed else EsportsOrange,
-                modifier = Modifier.size(22.dp)
-            )
+            if (customIcon != null) {
+                customIcon()
+            } else {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = if (tint == DangerRed) DangerRed else EsportsOrange,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
             Spacer(modifier = Modifier.width(15.dp))
             Text(
                 text = title,

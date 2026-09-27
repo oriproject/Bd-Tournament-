@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -17,6 +18,12 @@ interface TournamentDao {
     @Query("DELETE FROM categories")
     suspend fun clearCategories()
 
+    @Transaction
+    suspend fun replaceCategories(categories: List<CategoryEntity>) {
+        clearCategories()
+        insertCategories(categories)
+    }
+
     @Query("SELECT * FROM matches ORDER BY timestamp ASC")
     fun getAllMatches(): Flow<List<MatchEntity>>
 
@@ -25,6 +32,12 @@ interface TournamentDao {
 
     @Query("DELETE FROM matches")
     suspend fun clearMatches()
+
+    @Transaction
+    suspend fun replaceMatches(matches: List<MatchEntity>) {
+        clearMatches()
+        insertMatches(matches)
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMatch(match: MatchEntity)
@@ -37,6 +50,12 @@ interface TournamentDao {
 
     @Query("DELETE FROM participants")
     suspend fun clearParticipants()
+
+    @Transaction
+    suspend fun replaceParticipants(participants: List<ParticipantEntity>) {
+        clearParticipants()
+        insertParticipants(participants)
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertParticipant(participant: ParticipantEntity)
@@ -64,4 +83,10 @@ interface TournamentDao {
 
     @Query("DELETE FROM users")
     suspend fun clearUsers()
+
+    @Transaction
+    suspend fun replaceActiveUser(user: UserEntity) {
+        clearUsers()
+        insertUser(user)
+    }
 }
