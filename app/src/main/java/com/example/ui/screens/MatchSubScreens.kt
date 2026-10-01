@@ -35,8 +35,11 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.CategoryEntity
 import com.example.data.local.MatchEntity
 import com.example.data.local.ParticipantEntity
+import com.example.data.local.formatMatchCountdown
+import com.example.data.local.formatMatchScheduleTime
 import com.example.ui.components.MatchCardItem
 import com.example.ui.components.SubPageTopBar
 import com.example.ui.theme.BgDark
@@ -221,15 +226,8 @@ fun MatchDetailsScreen(
 
         if (match == null) return@Column
 
-        val diff = match.timestamp - currentTimeMillis
-        val countdownText = if (diff <= 0L) {
-            "Match Started"
-        } else {
-            val h = (diff / (1000 * 60 * 60)) % 24
-            val m = (diff / (1000 * 60)) % 60
-            val s = (diff / 1000) % 60
-            "Starts In: ${h}h:${m}m:${s}s"
-        }
+        val scheduleDisplayText = formatMatchScheduleTime(match)
+        val countdownText = formatMatchCountdown(match, currentTimeMillis)
 
         val matchParts = participants.filter { it.matchKey == match.dbKey }
 
@@ -254,7 +252,7 @@ fun MatchDetailsScreen(
                 )
                 Spacer(modifier = Modifier.height(5.dp))
                 Text(
-                    text = "Starts In: ${match.time}",
+                    text = scheduleDisplayText,
                     fontSize = 14.sp,
                     color = TextMuted
                 )
@@ -602,18 +600,59 @@ private fun ResultTableRow(rank: Int, name: String, kills: Int, win: Int) {
     }
 }
 
+fun resolveAvailableTeamModes(match: MatchEntity, categoryName: String = ""): List<String> {
+    val typeLower = match.type.trim().lowercase()
+    val catWithoutCS = categoryName.lowercase().replace("clash squad", "")
+    val titleWithoutCS = match.title.lowercase().replace("clash squad", "")
+    val catIdLower = match.categoryId.lowercase()
+
+    if (typeLower.contains("squad") || typeLower.contains("4v4")) {
+        return listOf("Solo", "Duo", "Squad")
+    }
+    if (typeLower.contains("duo") || typeLower.contains("2v2")) {
+        return listOf("Solo", "Duo")
+    }
+    if (typeLower.contains("1v1") || titleWithoutCS.contains("1v1")) {
+        return listOf("Solo")
+    }
+    if (catWithoutCS.contains("squad") || catIdLower.contains("squad") ||
+        titleWithoutCS.contains("squad") || titleWithoutCS.contains("4v4")
+    ) {
+        return listOf("Solo", "Duo", "Squad")
+    }
+    if (catWithoutCS.contains("duo") || catIdLower.contains("duo") ||
+        titleWithoutCS.contains("duo") || titleWithoutCS.contains("2v2")
+    ) {
+        return listOf("Solo", "Duo")
+    }
+    return listOf("Solo")
+}
+
 @Composable
 fun JoinMatchScreen(
     match: MatchEntity?,
+    categoryName: String = "",
     onBack: () -> Unit,
     onConfirmJoin: (MatchEntity, List<String>) -> Unit
 ) {
     if (match == null) return
     val focusManager = LocalFocusManager.current
 
-    // Always 1 slot per user regardless of Solo / Duo / Squad / 2v2 / 4v4
+    val availableModes = remember(match.dbKey, match.type, match.title, categoryName) {
+        resolveAvailableTeamModes(match, categoryName)
+    }
+    var selectedMode by remember(match.dbKey) {
+        mutableStateOf(availableModes.first())
+    }
+    val requiredSlots = when (selectedMode) {
+        "Squad" -> 4
+        "Duo" -> 2
+        else -> 1
+    }
+    val totalEntryFee = match.entry * requiredSlots
+
     val playerNames = remember(match.dbKey) {
-        mutableStateListOf("")
+        mutableStateListOf("", "", "", "")
     }
 
     Box(
@@ -627,10 +666,11 @@ fun JoinMatchScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = 90.dp)
+                .padding(bottom = 96.dp)
         ) {
             SubPageTopBar(
-                title = "Match Joining",
+                title = "Join Match",
+                darkMode = true,
                 onBack = {
                     focusManager.clearFocus()
                     onBack()
@@ -645,112 +685,169 @@ fun JoinMatchScreen(
                     .fillMaxWidth()
                     .padding(15.dp)
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+                Column(modifier = Modifier.padding(18.dp)) {
                     Text(
                         text = match.title,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Black,
-                        color = TextWhite
+                        color = TextWhite,
+                        lineHeight = 24.sp
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = match.time,
+                        text = formatMatchScheduleTime(match),
                         fontSize = 13.sp,
-                        color = EsportsOrange,
-                        fontWeight = FontWeight.SemiBold
+                        color = TextMuted,
+                        fontWeight = FontWeight.Medium
                     )
-                    Spacer(modifier = Modifier.height(15.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
+                    // Prize Pool & Entry Fee Cards side-by-side
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text(
-                            text = "Win Prize: ${match.totalPrize}TK",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = EsportsGold
-                        )
-                        Text(
-                            text = "Entry Fee: ${match.entry}TK",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = EsportsGreen
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(15.dp))
-
-                    // Dashed Warning Box
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .drawBehind {
-                                drawRoundRect(
-                                    color = EsportsOrange,
-                                    style = Stroke(
-                                        width = 1.5.dp.toPx(),
-                                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
-                                    ),
-                                    cornerRadius = CornerRadius(6.dp.toPx())
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = SurfaceElevatedDark,
+                            border = BorderStroke(1.dp, CardBorderDark),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp)
+                            ) {
+                                Text(
+                                    text = "Prize Pool",
+                                    fontSize = 12.sp,
+                                    color = TextMuted,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Win Prize: ${match.totalPrize}TK",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF18D2A6)
                                 )
                             }
-                            .padding(10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "*অবশ্যই এখানে আপনার গেমের এর নামটি দিয়ে জয়েন করবেন।",
-                            color = EsportsGold,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center
-                        )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = SurfaceElevatedDark,
+                            border = BorderStroke(1.dp, CardBorderDark),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp)
+                            ) {
+                                Text(
+                                    text = "Entry Fee",
+                                    fontSize = 12.sp,
+                                    color = TextMuted,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Entry Fee: ${totalEntryFee}TK",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = EsportsGold,
+                                    modifier = Modifier.testTag("join_entry_fee_text")
+                                )
+                            }
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(15.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // Badge
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = EsportsOrange
+                    // Warning Box
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = SurfaceElevatedDark,
+                        border = BorderStroke(1.dp, CardBorderDark),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = match.type,
-                                color = Color.Black,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 14.sp,
-                                modifier = Modifier.padding(horizontal = 22.dp, vertical = 5.dp)
+                                text = "*অবশ্যই এখানে আপনার গেমের এর নামটি দিয়ে জয়েন করবেন।",
+                                color = EsportsGold,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 19.sp
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(18.dp))
 
-                    // Single Player Name Input (1 slot per user)
-                    OutlinedTextField(
-                        value = playerNames[0],
-                        onValueChange = { playerNames[0] = it },
-                        placeholder = {
-                            Text(
-                                text = "Player Name (Game ID)",
-                                fontSize = 14.sp,
-                                color = TextMuted
-                            )
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = EsportsOrange,
-                            unfocusedBorderColor = CardBorderDark,
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 10.dp)
-                            .testTag("join_player_input_1")
-                    )
+                    // Mode Selection Row: Solo / Duo / Squad
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        availableModes.forEach { mode ->
+                            val isSelected = selectedMode == mode
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) Color(0xFF18D2A6) else SurfaceElevatedDark,
+                                border = if (isSelected) null else BorderStroke(1.dp, CardBorderDark),
+                                modifier = Modifier
+                                    .clickable { selectedMode = mode }
+                                    .testTag("join_mode_${mode.lowercase()}")
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 9.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = mode,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    // Dynamic Player Name Inputs (1 for Solo, 2 for Duo, 4 for Squad)
+                    for (idx in 0 until requiredSlots) {
+                        OutlinedTextField(
+                            value = playerNames[idx],
+                            onValueChange = { playerNames[idx] = it },
+                            placeholder = {
+                                Text(
+                                    text = "Player ${idx + 1} Name",
+                                    fontSize = 14.sp,
+                                    color = TextMuted
+                                )
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = SurfaceElevatedDark,
+                                unfocusedContainerColor = SurfaceElevatedDark,
+                                focusedBorderColor = Color(0xFF18D2A6),
+                                unfocusedBorderColor = CardBorderDark,
+                                focusedTextColor = TextWhite,
+                                unfocusedTextColor = TextWhite
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .testTag("join_player_input_${idx + 1}")
+                        )
+                    }
                 }
             }
         }
@@ -759,26 +856,27 @@ fun JoinMatchScreen(
         Button(
             onClick = {
                 focusManager.clearFocus()
-                onConfirmJoin(match, playerNames.toList())
+                onConfirmJoin(match, playerNames.take(requiredSlots))
             },
-            shape = RoundedCornerShape(30.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = EsportsOrange,
-                contentColor = Color.Black
+                containerColor = Color(0xFFF5C518),
+                contentColor = Color.White
             ),
             elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp)
                 .navigationBarsPadding()
                 .height(52.dp)
                 .testTag("confirm_join_now_button")
         ) {
             Text(
                 text = "Join Now!",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Black
+                fontSize = 17.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White
             )
         }
     }

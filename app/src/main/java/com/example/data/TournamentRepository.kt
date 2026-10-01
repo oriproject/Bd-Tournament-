@@ -454,23 +454,29 @@ class TournamentRepository(
             }
         }
 
-        val singleIgn = playerIgns.firstOrNull()?.trim().orEmpty()
-        if (singleIgn.isBlank()) {
-            return@withContext Result.failure(Exception("Please enter your Game ID Name"))
+        val cleanedIgns = playerIgns.map { it.trim() }.filter { it.isNotEmpty() }
+        if (cleanedIgns.isEmpty() || cleanedIgns.size != playerIgns.size) {
+            return@withContext Result.failure(Exception("Please enter all player Game ID names"))
         }
 
         val existingParts = dao.getAllParticipants().first()
         if (existingParts.any { it.matchKey == match.dbKey && it.joinedBy == syncedUser.uid }) {
-            return@withContext Result.failure(Exception("আপনি ইতিমধ্যে এই ম্যাচে ১টি স্লটে জয়েন করেছেন!"))
+            return@withContext Result.failure(Exception("আপনি ইতিমধ্যে এই ম্যাচে জয়েন করেছেন!"))
         }
 
-        if (match.joined >= match.total) {
+        val slotCount = cleanedIgns.size
+        val maxSlots = if (match.total > 0) match.total else 48
+        if (match.joined >= maxSlots) {
             return@withContext Result.failure(Exception("Match is already full!"))
         }
+        if (match.joined + slotCount > maxSlots) {
+            val remaining = (maxSlots - match.joined).coerceAtLeast(0)
+            return@withContext Result.failure(
+                Exception("পর্যাপ্ত স্লট খালি নেই! মাত্র $remaining টি স্লট বাকি আছে।")
+            )
+        }
 
-        // Strictly 1 slot per user
-        val singlePlayerList = listOf(singleIgn)
-        val totalCost = match.entry.toDouble()
+        val totalCost = (match.entry * slotCount).toDouble()
         if (syncedUser.deposit + syncedUser.winning < totalCost) {
             return@withContext Result.failure(Exception("Insufficient Balance! Required: ৳${totalCost.toInt()}"))
         }
@@ -489,27 +495,33 @@ class TournamentRepository(
         val updatedUser = syncedUser.copy(deposit = d, winning = w)
         dao.insertUser(updatedUser)
 
-        val newParticipants = listOf(
+        val nowMs = System.currentTimeMillis()
+        val newParticipants = cleanedIgns.mapIndexed { index, ign ->
             ParticipantEntity(
-                id = "${match.dbKey}_${syncedUser.uid}_${System.currentTimeMillis()}_0",
+                id = "${match.dbKey}_${syncedUser.uid}_${nowMs}_$index",
                 matchKey = match.dbKey,
-                ign = singleIgn,
+                ign = ign,
                 joinedBy = syncedUser.uid,
                 kills = 0,
                 win = 0
             )
-        )
+        }
         dao.insertParticipants(newParticipants)
 
-        val newJoinedCount = match.joined + 1
+        val newJoinedCount = match.joined + slotCount
         dao.insertMatch(match.copy(joined = newJoinedCount))
 
+        val modeLabel = when (slotCount) {
+            4 -> "Squad"
+            2 -> "Duo"
+            else -> "Solo"
+        }
         val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
         val txKey = "JOIN${System.currentTimeMillis().toString().takeLast(6)}"
         val tx = TransactionEntity(
             id = txKey,
             uid = syncedUser.uid,
-            type = "Match Join (${match.title})",
+            type = "Match Join - $modeLabel (${match.title})",
             amount = totalCost,
             method = "Wallet",
             status = "Success",
@@ -520,7 +532,7 @@ class TournamentRepository(
 
         // Sync to Firebase RTDB
         remote.syncUserBalance(syncedUser.uid, d, w, syncedUser.idToken)
-        remote.pushParticipantAndCount(match.dbKey, singlePlayerList, syncedUser.uid, newJoinedCount, syncedUser.idToken)
+        remote.pushParticipantAndCount(match.dbKey, cleanedIgns, syncedUser.uid, newJoinedCount, syncedUser.idToken)
         remote.pushTransaction(updatedUser, tx)
 
         Result.success(Unit)

@@ -10,6 +10,7 @@ import com.example.data.local.NotificationEntity
 import com.example.data.local.ParticipantEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserEntity
+import com.example.data.local.parseMatchScheduleToTimestamp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -699,15 +700,53 @@ class FirebaseRestClient {
                 .ifBlank { v.optString("details", "") }
                 .ifBlank { v.optString("desc", "") }
 
+            val catId = v.optString("categoryId", "")
+                .ifBlank { v.optString("category_id", "") }
+                .ifBlank { v.optString("category", "") }
+                .ifBlank { v.optString("cat_id", "") }
+            val matchType = v.optString("type", "")
+                .ifBlank { v.optString("match_type", "") }
+                .ifBlank { v.optString("matchType", "") }
+                .ifBlank { v.optString("team_type", "") }
+                .ifBlank { v.optString("teamType", "") }
+                .ifBlank { v.optString("mode", "") }
+                .ifBlank { "Solo" }
+
+            val datePart = v.optString("date", "")
+                .ifBlank { v.optString("match_date", "") }
+                .ifBlank { v.optString("matchDate", "") }
+                .ifBlank { v.optString("start_date", "") }
+                .ifBlank { v.optString("startDate", "") }
+                .trim()
+            val timePart = v.optString("time", "")
+                .ifBlank { v.optString("match_time", "") }
+                .ifBlank { v.optString("matchTime", "") }
+                .ifBlank { v.optString("start_time", "") }
+                .ifBlank { v.optString("startTime", "") }
+                .ifBlank { v.optString("schedule", "") }
+                .trim()
+            val combinedSchedule = when {
+                datePart.isNotBlank() && timePart.isNotBlank() && !timePart.contains(datePart, ignoreCase = true) ->
+                    "$datePart, $timePart"
+                timePart.isNotBlank() -> timePart
+                else -> datePart
+            }
+            val rawTs = v.optLong("timestamp", 0L)
+                .takeIf { it > 0L }
+                ?: v.optLong("start_timestamp", 0L).takeIf { it > 0L }
+                ?: v.optLong("startTimestamp", 0L).takeIf { it > 0L }
+                ?: v.optLong("startTimeMillis", 0L)
+            val resolvedTimestamp = parseMatchScheduleToTimestamp(combinedSchedule, rawTs)
+
             list.add(
                 MatchEntity(
                     dbKey = k,
-                    categoryId = v.optString("categoryId", ""),
+                    categoryId = catId,
                     title = v.optString("title", "Free Fire Match"),
-                    time = v.optString("time", ""),
-                    timestamp = v.optLong("timestamp", System.currentTimeMillis() + 3600_000L),
+                    time = combinedSchedule,
+                    timestamp = resolvedTimestamp,
                     totalPrize = v.optInt("total_prize", v.optInt("totalPrize", 500)),
-                    type = v.optString("type", "Solo"),
+                    type = matchType,
                     entry = v.optInt("entry", 20),
                     perKill = v.optInt("per_kill", v.optInt("perKill", 10)),
                     map = v.optString("map", "Bermuda"),

@@ -181,8 +181,12 @@ fun BdTournamentApp() {
                     }
                     is SubScreen.JoinMatch -> {
                         val m = matches.find { it.dbKey == curSub.matchKey }
+                        val catId = m?.categoryId?.ifBlank { curSub.returnToCategory.orEmpty() }
+                            ?: curSub.returnToCategory.orEmpty()
+                        val catName = categories.find { it.id == catId }?.name.orEmpty()
                         JoinMatchScreen(
                             match = m,
+                            categoryName = catName,
                             onBack = viewModel::navigateBack,
                             onConfirmJoin = viewModel::confirmJoinMatch
                         )

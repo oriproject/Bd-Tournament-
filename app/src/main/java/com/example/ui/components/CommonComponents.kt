@@ -67,6 +67,8 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.local.MatchEntity
+import com.example.data.local.formatMatchCountdown
+import com.example.data.local.formatMatchScheduleTime
 import com.example.ui.AlertMessage
 import com.example.ui.AlertType
 import com.example.ui.theme.CardBorderDark
@@ -270,15 +272,8 @@ fun MatchCardItem(
     val progress = (joined.toFloat() / total.toFloat()).coerceIn(0f, 1f)
     val spotsLeft = (total - joined).coerceAtLeast(0)
 
-    val diff = match.timestamp - currentTimeMillis
-    val countdownText = if (diff <= 0L) {
-        "Match Started"
-    } else {
-        val h = (diff / (1000 * 60 * 60)) % 24
-        val m = (diff / (1000 * 60)) % 60
-        val s = (diff / 1000) % 60
-        "Starts In: ${h}h:${m}m:${s}s"
-    }
+    val scheduleDisplayText = formatMatchScheduleTime(match)
+    val countdownText = formatMatchCountdown(match, currentTimeMillis)
 
     Card(
         modifier = Modifier
@@ -333,7 +328,7 @@ fun MatchCardItem(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = match.time,
+                        text = scheduleDisplayText,
                         color = EsportsOrange,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
