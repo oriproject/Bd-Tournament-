@@ -432,6 +432,7 @@ class TournamentViewModel(
     }
 
     fun verifyAutoPay(trxId: String, amountStr: String = "", senderNumber: String = "") {
+        if (_isLoading.value) return
         val user = currentUser.value ?: return
         val enteredAmount = amountStr.trim().toDoubleOrNull()
         if (enteredAmount == null || enteredAmount <= 0.0) {
@@ -482,11 +483,12 @@ class TournamentViewModel(
     }
 
     fun submitWithdraw(number: String, amountStr: String) {
+        if (_isLoading.value) return
         val user = currentUser.value ?: return
         val alreadyWithdrawnToday = userTransactions.value.any { tx ->
             tx.uid == user.uid &&
                 tx.type.contains("Withdraw", ignoreCase = true) &&
-                !tx.status.equals("Rejected", ignoreCase = true) &&
+                !tx.status.contains("Reject", ignoreCase = true) &&
                 isSameDayAsToday(tx.date)
         }
         if (alreadyWithdrawnToday) {
@@ -503,6 +505,14 @@ class TournamentViewModel(
                 type = AlertType.WARNING,
                 title = "সব তথ্য দিন",
                 message = "অনুগ্রহ করে মোবাইল নাম্বার এবং উইথড্র করার টাকার পরিমাণ লিখুন।"
+            )
+            return
+        }
+        if (amount > user.winning) {
+            _alertMessage.value = AlertMessage(
+                type = AlertType.ERROR,
+                title = "উইথড্র করা যাবে না!",
+                message = "ডিপোজিট করা টাকা উইথড্র করা যাবে না! শুধুমাত্র ম্যাচ জিতে পাওয়া Winning টাকা উইথড্র করতে পারবেন। (আপনার বর্তমান Winning Balance: ৳${user.winning.toInt().coerceAtLeast(0)})"
             )
             return
         }

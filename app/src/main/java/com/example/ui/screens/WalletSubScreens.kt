@@ -812,12 +812,12 @@ fun WithdrawScreen(
     val focusManager = LocalFocusManager.current
     var mobileNumber by remember { mutableStateOf("") }
     var amountStr by remember { mutableStateOf("") }
-    val winningAvailable = (user?.winning?.toInt() ?: 0) + (user?.deposit?.toInt() ?: 0)
+    val winningAvailable = user?.winning?.toInt()?.coerceAtLeast(0) ?: 0
     val todayWithdrawCount = remember(transactions, user?.uid) {
         transactions.count { tx ->
             (user == null || tx.uid == user.uid) &&
                 tx.type.contains("Withdraw", ignoreCase = true) &&
-                !tx.status.equals("Rejected", ignoreCase = true) &&
+                !tx.status.contains("Reject", ignoreCase = true) &&
                 isSameDayAsToday(tx.date)
         }.coerceIn(0, 1)
     }
@@ -864,7 +864,7 @@ fun WithdrawScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Available Balance",
+                        text = "Withdrawable Winning Balance",
                         color = TextMuted,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
@@ -875,6 +875,14 @@ fun WithdrawScreen(
                         color = EsportsOrange,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "শুধুমাত্র ম্যাচ জিতে পাওয়া Winning টাকা উইথড্র করা যাবে",
+                        color = EsportsGold,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -1258,12 +1266,12 @@ fun HistoryScreen(
             ) {
                 items(transactions, key = { it.id }) { t ->
                     val statusText = t.status.ifBlank { "Pending" }
-                    val isApproved = statusText.equals("Approved", ignoreCase = true) ||
-                            statusText.equals("Success", ignoreCase = true) ||
-                            statusText.equals("Completed", ignoreCase = true)
-                    val isRejected = statusText.equals("Rejected", ignoreCase = true) ||
-                            statusText.equals("Cancelled", ignoreCase = true) ||
-                            statusText.equals("Failed", ignoreCase = true)
+                    val isApproved = statusText.contains("Approv", ignoreCase = true) ||
+                            statusText.contains("Success", ignoreCase = true) ||
+                            statusText.contains("Complet", ignoreCase = true)
+                    val isRejected = statusText.contains("Reject", ignoreCase = true) ||
+                            statusText.contains("Cancel", ignoreCase = true) ||
+                            statusText.contains("Fail", ignoreCase = true)
                     val statusColor = when {
                         isApproved -> EsportsGreen
                         isRejected -> DangerRed

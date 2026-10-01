@@ -1246,12 +1246,12 @@ class FirebaseRestClient {
 
     private fun isApprovedStatus(status: String): Boolean {
         val s = status.trim().lowercase()
-        return s == "approved" || s == "success" || s == "completed" || s == "accepted" || s == "approve"
+        return s.contains("approv") || s.contains("success") || s.contains("complet") || s.contains("accept")
     }
 
     private fun isRejectedStatus(status: String): Boolean {
         val s = status.trim().lowercase()
-        return s == "rejected" || s == "cancelled" || s == "canceled" || s == "declined" || s == "failed" || s == "reject"
+        return s.contains("reject") || s.contains("cancel") || s.contains("declin") || s.contains("fail")
     }
 
     suspend fun syncAndFetchUserTransactions(user: UserEntity): List<TransactionEntity> =
@@ -1322,8 +1322,6 @@ class FirebaseRestClient {
                                 put("approvedAt", System.currentTimeMillis())
                             }
                             patchJson("transactions/$uid/$k", updateObj, idToken)
-                            patchJson("deposit_requests/$txId", updateObj, idToken)
-                            patchJson("Auto Pay/$txId", updateObj, idToken)
                         } else if (!isApprovedStatus(v.optString("status", ""))) {
                             val updateObj = JSONObject().apply {
                                 put("status", "Approved")
@@ -1331,14 +1329,12 @@ class FirebaseRestClient {
                             }
                             patchJson("transactions/$uid/$k", updateObj, idToken)
                         }
-                    } else if (rejectedAnywhere && status != "Rejected") {
+                    } else if (rejectedAnywhere && !isRejectedStatus(v.optString("status", ""))) {
                         status = "Rejected"
                         val updateObj = JSONObject().apply {
                             put("status", "Rejected")
                         }
                         patchJson("transactions/$uid/$k", updateObj, idToken)
-                        patchJson("deposit_requests/$txId", updateObj, idToken)
-                        patchJson("Auto Pay/$txId", updateObj, idToken)
                     }
                 } else if (type.contains("Withdraw", ignoreCase = true)) {
                     if (!wdFetched) {
@@ -1354,7 +1350,10 @@ class FirebaseRestClient {
                     val alreadyDebitedAnywhere = debited ||
                             (wdItem?.optBoolean("debited", false) == true) ||
                             (wdAltItem?.optBoolean("debited", false) == true)
-                    val alreadyRefundedAnywhere = v.optBoolean("refunded", false) ||
+                    val alreadyRefundedByAdminOrApp = v.optBoolean("refunded", false) ||
+                            status.contains("refunded", ignoreCase = true) ||
+                            wdStatus.contains("refunded", ignoreCase = true) ||
+                            wdAltStatus.contains("refunded", ignoreCase = true) ||
                             (wdItem?.optBoolean("refunded", false) == true) ||
                             (wdAltItem?.optBoolean("refunded", false) == true)
 
@@ -1379,12 +1378,9 @@ class FirebaseRestClient {
                                 put("approvedAt", System.currentTimeMillis())
                             }
                             patchJson("transactions/$uid/$k", updateObj, idToken)
-                            patchJson("withdraw_requests/$txId", updateObj, idToken)
-                            patchJson("withdraw/$txId", updateObj, idToken)
                         }
                     } else if (rejectedAnywhere) {
-                        status = "Rejected"
-                        if (!alreadyRefundedAnywhere && amount > 0.0) {
+                        if (!alreadyRefundedByAdminOrApp && amount > 0.0) {
                             val dedDep = v.optDouble(
                                 "deductedFromDep",
                                 wdItem?.optDouble("deductedFromDep", 0.0) ?: 0.0
@@ -1400,22 +1396,18 @@ class FirebaseRestClient {
                                 totalNewlyRefundedWin += amount
                             }
                             val updateObj = JSONObject().apply {
-                                put("status", "Rejected")
+                                put("status", "Rejected (Refunded)")
                                 put("refunded", true)
                                 put("rejectedAt", System.currentTimeMillis())
                             }
                             patchJson("transactions/$uid/$k", updateObj, idToken)
-                            patchJson("withdraw_requests/$txId", updateObj, idToken)
-                            patchJson("withdraw/$txId", updateObj, idToken)
-                        } else if (!isRejectedStatus(v.optString("status", ""))) {
+                        } else if (!v.optBoolean("refunded", false)) {
                             val updateObj = JSONObject().apply {
-                                put("status", "Rejected")
                                 put("refunded", true)
                             }
                             patchJson("transactions/$uid/$k", updateObj, idToken)
-                            patchJson("withdraw_requests/$txId", updateObj, idToken)
-                            patchJson("withdraw/$txId", updateObj, idToken)
                         }
+                        status = "Rejected"
                     }
                 }
 
@@ -1560,10 +1552,7 @@ class FirebaseRestClient {
                 put("date", tx.date)
                 put("timestamp", System.currentTimeMillis())
             }
-            val ok1 = putJson("transactions/${user.uid}/${tx.id}", payload, user.idToken)
-            val ok2 = putJson("withdraw_requests/${tx.id}", payload, user.idToken)
-            val ok3 = putJson("withdraw/${tx.id}", payload, user.idToken)
-            ok1 || ok2 || ok3
+            putJson("transactions/${user.uid}/${tx.id}", payload, user.idToken)
         }
 
     suspend fun pushParticipantAndCount(
@@ -1635,8 +1624,6 @@ class FirebaseRestClient {
                 put("date", dateStr)
                 put("timestamp", now)
             }
-            putJson("deposit_requests/$cleanTrx", depositPayload, user.idToken)
-            putJson("Auto Pay/$cleanTrx", depositPayload, user.idToken)
             putJson("transactions/${user.uid}/$cleanTrx", depositPayload, user.idToken)
 
             Result.success(enteredAmount)
