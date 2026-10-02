@@ -60,11 +60,22 @@ interface TournamentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertParticipant(participant: ParticipantEntity)
 
-    @Query("SELECT * FROM transactions WHERE uid = :uid ORDER BY date DESC")
+    @Query("SELECT * FROM transactions WHERE uid = :uid ORDER BY timestamp DESC")
     fun getTransactionsForUser(uid: String): Flow<List<TransactionEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransactions(transactions: List<TransactionEntity>)
+
+    @Query("DELETE FROM transactions WHERE uid = :uid")
+    suspend fun clearTransactionsForUser(uid: String)
+
+    @Transaction
+    suspend fun replaceTransactionsForUser(uid: String, transactions: List<TransactionEntity>) {
+        clearTransactionsForUser(uid)
+        if (transactions.isNotEmpty()) {
+            insertTransactions(transactions)
+        }
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransaction(transaction: TransactionEntity)
@@ -74,6 +85,17 @@ interface TournamentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNotifications(notifications: List<NotificationEntity>)
+
+    @Query("DELETE FROM notifications")
+    suspend fun clearNotifications()
+
+    @Transaction
+    suspend fun replaceNotifications(notifications: List<NotificationEntity>) {
+        clearNotifications()
+        if (notifications.isNotEmpty()) {
+            insertNotifications(notifications)
+        }
+    }
 
     @Query("SELECT * FROM users LIMIT 1")
     fun getActiveUser(): Flow<UserEntity?>

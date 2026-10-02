@@ -15,6 +15,7 @@ import com.example.data.local.TransactionEntity
 import com.example.data.local.UserEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class MainTab {
     HOME, MY_MATCHES, WALLET, RESULT, PROFILE
@@ -143,11 +145,15 @@ class TournamentViewModel(
     val currentTimeMillis: StateFlow<Long> = _currentTimeMillis.asStateFlow()
 
     init {
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.initializeAndSync()
-        }
         viewModelScope.launch {
-            delay(2400L)
+            val minSplashJob = async { delay(1200L) }
+            withTimeoutOrNull(3200L) {
+                try {
+                    repository.initializeAndSync()
+                } catch (_: Exception) {
+                }
+            }
+            minSplashJob.await()
             _showSplash.value = false
             if (repository.appSettings.value.showPopup && repository.appSettings.value.popupText.isNotBlank()) {
                 _showStartupModal.value = true
@@ -161,12 +167,26 @@ class TournamentViewModel(
         }
         // Live periodic sync with Firebase Realtime Database so Admin Panel updates reflect automatically
         viewModelScope.launch(Dispatchers.IO) {
+            delay(2000L)
             while (true) {
-                delay(5000L)
                 try {
                     repository.syncLiveFromFirebase()
                 } catch (_: Exception) {
                 }
+                delay(2000L)
+            }
+        }
+    }
+
+    fun refreshFromFirebase() {
+        triggerImmediateSync()
+    }
+
+    private fun triggerImmediateSync() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.syncLiveFromFirebase(forceWait = true)
+            } catch (_: Exception) {
             }
         }
     }
@@ -178,21 +198,16 @@ class TournamentViewModel(
     fun selectTab(tab: MainTab) {
         _subScreen.value = SubScreen.None
         _activeTab.value = tab
+        triggerImmediateSync()
     }
 
     fun navigateSub(screen: SubScreen) {
         _subScreen.value = screen
-        if (screen is SubScreen.TopPlayers || screen is SubScreen.AllRules) {
-            viewModelScope.launch(Dispatchers.IO) {
-                try {
-                    repository.syncLiveFromFirebase()
-                } catch (_: Exception) {
-                }
-            }
-        }
+        triggerImmediateSync()
     }
 
     fun navigateBack() {
+        triggerImmediateSync()
         when (val cur = _subScreen.value) {
             is SubScreen.AddMoney, is SubScreen.Withdraw, is SubScreen.History -> {
                 if (_activeTab.value == MainTab.WALLET) {
@@ -237,6 +252,7 @@ class TournamentViewModel(
     fun openCategory(categoryId: String) {
         _matchFilterStatus.value = "Upcoming"
         _subScreen.value = SubScreen.CategoryMatches(categoryId)
+        triggerImmediateSync()
     }
 
     fun setMatchFilter(status: String) {

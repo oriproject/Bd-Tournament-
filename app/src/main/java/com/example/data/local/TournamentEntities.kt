@@ -55,7 +55,8 @@ data class TransactionEntity(
     val method: String = "",
     val status: String = "Success",
     val txId: String = "",
-    val date: String = ""
+    val date: String = "",
+    val timestamp: Long = 0L
 )
 
 @Entity(tableName = "notifications")
@@ -288,6 +289,67 @@ fun formatMatchCountdown(match: MatchEntity, currentTimeMillis: Long): String {
     } else {
         "Starts In: ${hours}h:${minutes}m:${seconds}s"
     }
+}
+
+private val transactionDatePatterns = listOf(
+    "M/d/yyyy, h:mm:ss a",
+    "M/d/yyyy, hh:mm:ss a",
+    "M/d/yyyy, h:mm a",
+    "M/d/yyyy, hh:mm a",
+    "MM/dd/yyyy, h:mm:ss a",
+    "MM/dd/yyyy, hh:mm:ss a",
+    "d/M/yyyy, h:mm:ss a",
+    "dd/MM/yyyy, h:mm:ss a",
+    "dd/MM/yyyy, hh:mm:ss a",
+    "d MMM yyyy, hh:mm:ss a",
+    "d MMM yyyy, h:mm:ss a",
+    "d MMM yyyy, hh:mm a",
+    "d MMM yyyy, h:mm a",
+    "dd MMM yyyy, hh:mm:ss a",
+    "dd MMM yyyy, hh:mm a",
+    "MMM d, yyyy, hh:mm:ss a",
+    "MMM d, yyyy, h:mm:ss a",
+    "MMM d, yyyy, hh:mm a",
+    "yyyy-MM-dd, hh:mm:ss a",
+    "yyyy-MM-dd, hh:mm a",
+    "yyyy-MM-dd HH:mm:ss",
+    "yyyy-MM-dd HH:mm",
+    "yyyy-MM-dd'T'HH:mm:ss"
+)
+
+fun parseTransactionDateToMillis(dateStr: String): Long {
+    val raw = dateStr
+        .replace('\u202F', ' ')
+        .replace('\u00A0', ' ')
+        .replace('\u2007', ' ')
+        .trim()
+        .replace(Regex("(?i)a\\.m\\.?"), "AM")
+        .replace(Regex("(?i)p\\.m\\.?"), "PM")
+        .replace(Regex("\\s+"), " ")
+    if (raw.isNotBlank()) {
+        for (pattern in transactionDatePatterns) {
+            try {
+                val sdf = SimpleDateFormat(pattern, Locale.ENGLISH).apply { isLenient = true }
+                val parsed = sdf.parse(raw)
+                if (parsed != null) return parsed.time
+            } catch (_: Exception) {
+            }
+            try {
+                val sdfLocal = SimpleDateFormat(pattern, Locale.getDefault()).apply { isLenient = true }
+                val parsedLocal = sdfLocal.parse(raw)
+                if (parsedLocal != null) return parsedLocal.time
+            } catch (_: Exception) {
+            }
+        }
+    }
+    return 0L
+}
+
+fun parseTransactionTimestamp(tx: TransactionEntity): Long {
+    if (tx.timestamp > 0L) {
+        return if (tx.timestamp in 1..999_999_999_999L) tx.timestamp * 1000L else tx.timestamp
+    }
+    return parseTransactionDateToMillis(tx.date)
 }
 
 data class AppSettingsData(

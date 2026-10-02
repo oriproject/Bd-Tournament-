@@ -7,9 +7,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,6 +55,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +84,7 @@ import com.example.data.isSameDayAsToday
 import com.example.data.local.AppSettingsData
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserEntity
+import com.example.data.local.parseTransactionTimestamp
 import com.example.ui.SubScreen
 import com.example.ui.components.SubPageTopBar
 import com.example.ui.theme.BgDark
@@ -1237,6 +1242,20 @@ fun HistoryScreen(
     transactions: List<TransactionEntity>,
     onBack: () -> Unit
 ) {
+    val sortedTransactions = remember(transactions) {
+        transactions.sortedWith(
+            compareByDescending<TransactionEntity> { parseTransactionTimestamp(it) }
+                .thenByDescending { it.timestamp }
+                .thenByDescending { it.id }
+        )
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(sortedTransactions.firstOrNull()?.id, sortedTransactions.size) {
+        if (sortedTransactions.isNotEmpty()) {
+            listState.scrollToItem(0)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1245,7 +1264,7 @@ fun HistoryScreen(
     ) {
         SubPageTopBar(title = "Transactions", onBack = onBack)
 
-        if (transactions.isEmpty()) {
+        if (sortedTransactions.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1261,10 +1280,11 @@ fun HistoryScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 contentPadding = PaddingValues(vertical = 10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(transactions, key = { it.id }) { t ->
+                items(sortedTransactions, key = { it.id }) { t ->
                     val statusText = t.status.ifBlank { "Pending" }
                     val isApproved = statusText.contains("Approv", ignoreCase = true) ||
                             statusText.contains("Success", ignoreCase = true) ||
@@ -1287,11 +1307,15 @@ fun HistoryScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 15.dp, vertical = 5.dp)
                     ) {
-                        Row(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
+                        ) {
                             Box(
                                 modifier = Modifier
                                     .width(5.dp)
-                                    .height(78.dp)
+                                    .fillMaxHeight()
                                     .background(statusColor)
                             )
                             Row(
@@ -1301,12 +1325,17 @@ fun HistoryScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 12.dp)
+                                ) {
                                     Text(
                                         text = t.type.uppercase(),
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 14.sp,
-                                        color = TextWhite
+                                        color = TextWhite,
+                                        lineHeight = 19.sp
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     if (t.number.isNotBlank()) {

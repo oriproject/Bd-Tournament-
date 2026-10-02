@@ -11,6 +11,7 @@ import com.example.data.local.ParticipantEntity
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserEntity
 import com.example.data.local.parseMatchScheduleToTimestamp
+import com.example.data.local.parseTransactionDateToMillis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -115,7 +116,12 @@ class FirebaseRestClient {
 
         for (url in urlsToTry) {
             try {
-                val req = Request.Builder().url(url).get().build()
+                val req = Request.Builder()
+                    .url(url)
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
+                    .get()
+                    .build()
                 client.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val body = resp.body?.string() ?: return null
@@ -124,7 +130,12 @@ class FirebaseRestClient {
                     } else if (resp.code == 401 || resp.code == 403) {
                         val refreshed = refreshTokenIfNeeded()
                         if (refreshed.isNotBlank() && refreshed != tokenToUse) {
-                            val retryReq = Request.Builder().url(buildDbUrl(path, refreshed)).get().build()
+                            val retryReq = Request.Builder()
+                                .url(buildDbUrl(path, refreshed))
+                                .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                                .header("Pragma", "no-cache")
+                                .get()
+                                .build()
                             client.newCall(retryReq).execute().use { retryResp ->
                                 if (retryResp.isSuccessful) {
                                     val body = retryResp.body?.string() ?: return null
@@ -324,20 +335,79 @@ class FirebaseRestClient {
         if (bannersList.isEmpty()) {
             parseBannerNodes(d, "sliders", bannersList)
         }
+        if (bannersList.isEmpty()) {
+            val rootBanners = getJson("banners")
+            if (rootBanners != null) {
+                val wrap = JSONObject().apply { put("banners", rootBanners) }
+                parseBannerNodes(wrap, "banners", bannersList)
+            }
+        }
+        if (bannersList.isEmpty()) {
+            val rootSliders = getJson("sliders")
+            if (rootSliders != null) {
+                val wrap = JSONObject().apply { put("sliders", rootSliders) }
+                parseBannerNodes(wrap, "sliders", bannersList)
+            }
+        }
+        val supportUrl = d.optString("support_link", "")
+            .ifBlank { d.optString("supportLink", "") }
+            .ifBlank { d.optString("telegram_link", "") }
+            .ifBlank { d.optString("telegram", "") }
+            .ifBlank { "https://t.me/DeveloperSketvia01" }
+        val shopUrl = d.optString("shop_link", "")
+            .ifBlank { d.optString("shopLink", "") }
+            .ifBlank { supportUrl }
+        if (bannersList.isEmpty()) {
+            bannersList.add(BannerItem(img = "local_hero", link = supportUrl))
+            bannersList.add(BannerItem(img = "local_shop", link = shopUrl))
+        }
+        val rawNotice = d.optString("notice", "")
+            .ifBlank { d.optString("notice_text", "") }
+            .ifBlank { d.optString("noticeText", "") }
+            .ifBlank { d.optString("announcement", "") }
+            .ifBlank { "Welcome to Bd Tournament! Join matches and win big prizes." }
+        val rawPopupText = d.optString("popup_text", "")
+            .ifBlank { d.optString("popupText", "") }
+            .ifBlank { d.optString("popup_message", "") }
+            .ifBlank { "আমাদের অ্যাপে আপনাকে স্বাগতম! প্রতিদিন টুর্নামেন্ট খেলে জিতে নিন আকর্ষণীয় পুরস্কার।" }
+        val showPopupFlag = if (d.has("show_popup")) {
+            d.optBoolean("show_popup", true)
+        } else if (d.has("showPopup")) {
+            d.optBoolean("showPopup", true)
+        } else {
+            true
+        }
         AppSettingsData(
             appName = "Bd Tournament",
-            appLogo = d.optString("app_logo", "https://cdn-icons-png.flaticon.com/512/149/149071.png"),
-            notice = sanitizeAppName(d.optString("notice", "Welcome to Bd Tournament! Join matches and win big prizes.")),
-            bkashNumber = d.optString("bkash_number", "01700-000000"),
-            nagadNumber = d.optString("nagad_number", "01800-000000"),
-            rocketNumber = d.optString("rocket_number", "01900-000000"),
-            howToAddMoneyLink = d.optString("how_to_add_money_link", "https://youtube.com"),
-            howToGetRoomIdLink = d.optString("how_to_get_room_id_link", "https://youtube.com"),
-            howToPlayLink = d.optString("how_to_play_link", "https://youtube.com"),
-            supportLink = d.optString("support_link", "https://t.me/DeveloperSketvia01"),
-            shopLink = d.optString("shop_link", "https://t.me/DeveloperSketvia01"),
-            showPopup = d.optBoolean("show_popup", true),
-            popupText = sanitizeAppName(d.optString("popup_text", "আমাদের অ্যাপে আপনাকে স্বাগতম! প্রতিদিন টুর্নামেন্ট খেলে জিতে নিন আকর্ষণীয় পুরস্কার।")),
+            appLogo = d.optString("app_logo", "")
+                .ifBlank { d.optString("appLogo", "") }
+                .ifBlank { "https://cdn-icons-png.flaticon.com/512/149/149071.png" },
+            notice = sanitizeAppName(rawNotice),
+            bkashNumber = d.optString("bkash_number", "")
+                .ifBlank { d.optString("bkashNumber", "") }
+                .ifBlank { d.optString("bkash", "") }
+                .ifBlank { "01700-000000" },
+            nagadNumber = d.optString("nagad_number", "")
+                .ifBlank { d.optString("nagadNumber", "") }
+                .ifBlank { d.optString("nagad", "") }
+                .ifBlank { "01800-000000" },
+            rocketNumber = d.optString("rocket_number", "")
+                .ifBlank { d.optString("rocketNumber", "") }
+                .ifBlank { d.optString("rocket", "") }
+                .ifBlank { "01900-000000" },
+            howToAddMoneyLink = d.optString("how_to_add_money_link", "")
+                .ifBlank { d.optString("howToAddMoneyLink", "") }
+                .ifBlank { "https://youtube.com" },
+            howToGetRoomIdLink = d.optString("how_to_get_room_id_link", "")
+                .ifBlank { d.optString("howToGetRoomIdLink", "") }
+                .ifBlank { "https://youtube.com" },
+            howToPlayLink = d.optString("how_to_play_link", "")
+                .ifBlank { d.optString("howToPlayLink", "") }
+                .ifBlank { "https://youtube.com" },
+            supportLink = supportUrl,
+            shopLink = shopUrl,
+            showPopup = showPopupFlag,
+            popupText = sanitizeAppName(rawPopupText),
             banners = bannersList
         )
     }
@@ -671,11 +741,21 @@ class FirebaseRestClient {
         while (keys.hasNext()) {
             val k = keys.next()
             val v = d.optJSONObject(k) ?: continue
+            val catName = v.optString("name", "")
+                .ifBlank { v.optString("title", "") }
+                .ifBlank { v.optString("category_name", "") }
+                .ifBlank { v.optString("categoryName", "") }
+                .ifBlank { "Battle Royale" }
+            val catImg = v.optString("img", "")
+                .ifBlank { v.optString("image", "") }
+                .ifBlank { v.optString("imgUrl", "") }
+                .ifBlank { v.optString("image_url", "") }
+                .ifBlank { v.optString("icon", "") }
             list.add(
                 CategoryEntity(
                     id = k,
-                    name = v.optString("name", "Battle Royale"),
-                    img = v.optString("img", "")
+                    name = catName,
+                    img = catImg
                 )
             )
         }
@@ -793,20 +873,31 @@ class FirebaseRestClient {
         val d = getJson("notifications") ?: return@withContext emptyList()
         val list = mutableListOf<NotificationEntity>()
         val keys = d.keys()
-        var idx = 0L
+        var idx = 1L
         while (keys.hasNext()) {
             val k = keys.next()
             val v = d.optJSONObject(k) ?: continue
+            val rawTs = v.optLong("timestamp", 0L)
+                .takeIf { it > 0L }
+                ?: v.optLong("createdAt", 0L).takeIf { it > 0L }
+                ?: v.optLong("time", 0L).takeIf { it > 0L }
+                ?: parseTransactionDateToMillis(v.optString("date", ""))
+                    .takeIf { it > 0L }
+                ?: (idx++)
             list.add(
                 NotificationEntity(
                     id = k,
                     title = sanitizeAppName(v.optString("title", "Update")),
-                    body = sanitizeAppName(v.optString("body", "")),
-                    timestamp = v.optLong("timestamp", System.currentTimeMillis() + (idx++))
+                    body = sanitizeAppName(
+                        v.optString("body", "")
+                            .ifBlank { v.optString("message", "") }
+                            .ifBlank { v.optString("text", "") }
+                    ),
+                    timestamp = rawTs
                 )
             )
         }
-        list
+        list.sortedByDescending { it.timestamp }
     }
 
     fun generatePromoCodeForUser(username: String, email: String, uid: String): String {
@@ -1411,6 +1502,18 @@ class FirebaseRestClient {
                     }
                 }
 
+                val rawTs = v.optLong("timestamp", 0L)
+                    .takeIf { it > 0L }
+                    ?: v.optLong("createdAt", 0L).takeIf { it > 0L }
+                    ?: v.optLong("created_at", 0L).takeIf { it > 0L }
+                    ?: v.optLong("time", 0L).takeIf { it > 0L }
+                    ?: 0L
+                val resolvedTs = if (rawTs > 0L) {
+                    if (rawTs in 1..999_999_999_999L) rawTs * 1000L else rawTs
+                } else {
+                    parseTransactionDateToMillis(date)
+                }
+
                 list.add(
                     TransactionEntity(
                         id = k,
@@ -1421,7 +1524,8 @@ class FirebaseRestClient {
                         method = method,
                         status = status,
                         txId = txId,
-                        date = date
+                        date = date,
+                        timestamp = resolvedTs
                     )
                 )
             }
@@ -1474,17 +1578,30 @@ class FirebaseRestClient {
             while (keys.hasNext()) {
                 val k = keys.next()
                 val v = d.optJSONObject(k) ?: continue
+                val dateStr = v.optString("date", "")
+                val rawTs = v.optLong("timestamp", 0L)
+                    .takeIf { it > 0L }
+                    ?: v.optLong("createdAt", 0L).takeIf { it > 0L }
+                    ?: v.optLong("created_at", 0L).takeIf { it > 0L }
+                    ?: v.optLong("time", 0L).takeIf { it > 0L }
+                    ?: 0L
+                val resolvedTs = if (rawTs > 0L) {
+                    if (rawTs in 1..999_999_999_999L) rawTs * 1000L else rawTs
+                } else {
+                    parseTransactionDateToMillis(dateStr)
+                }
                 list.add(
                     TransactionEntity(
                         id = k,
                         uid = uid,
                         type = v.optString("type", "Transaction"),
                         amount = v.optDouble("amount", 0.0),
-                        number = v.optString("number", ""),
+                        number = v.optString("number", "").ifBlank { v.optString("senderNumber", "") },
                         method = v.optString("method", ""),
                         status = v.optString("status", "Pending"),
-                        txId = v.optString("txID", k),
-                        date = v.optString("date", "")
+                        txId = v.optString("txID", k).ifBlank { k },
+                        date = dateStr,
+                        timestamp = resolvedTs
                     )
                 )
             }
@@ -1503,6 +1620,7 @@ class FirebaseRestClient {
 
     suspend fun pushTransaction(user: UserEntity, tx: TransactionEntity) =
         withContext(Dispatchers.IO) {
+            val ts = if (tx.timestamp > 0L) tx.timestamp else System.currentTimeMillis()
             val payload = JSONObject().apply {
                 put("id", tx.id)
                 put("uid", user.uid)
@@ -1515,7 +1633,7 @@ class FirebaseRestClient {
                 put("status", tx.status)
                 put("txID", tx.txId)
                 put("date", tx.date)
-                put("timestamp", System.currentTimeMillis())
+                put("timestamp", ts)
             }
             putJson("transactions/${user.uid}/${tx.id}", payload, user.idToken)
         }
@@ -1527,6 +1645,7 @@ class FirebaseRestClient {
         deductedFromWin: Double
     ): Boolean =
         withContext(Dispatchers.IO) {
+            val ts = if (tx.timestamp > 0L) tx.timestamp else System.currentTimeMillis()
             val payload = JSONObject().apply {
                 put("id", tx.id)
                 put("txID", tx.txId)
@@ -1550,7 +1669,7 @@ class FirebaseRestClient {
                 put("deductedFromDep", deductedFromDep)
                 put("deductedFromWin", deductedFromWin)
                 put("date", tx.date)
-                put("timestamp", System.currentTimeMillis())
+                put("timestamp", ts)
             }
             putJson("transactions/${user.uid}/${tx.id}", payload, user.idToken)
         }
@@ -1581,6 +1700,7 @@ class FirebaseRestClient {
         senderNumber: String,
         method: String,
         dateStr: String,
+        timestampMs: Long,
         user: UserEntity
     ): Result<Double> = withContext(Dispatchers.IO) {
         try {
@@ -1605,7 +1725,6 @@ class FirebaseRestClient {
             }
 
             // 2. Save as Pending in Firebase Realtime Database (Admin will verify TrxID & Sender Number and change status to "Approved")
-            val now = System.currentTimeMillis()
             val depositPayload = JSONObject().apply {
                 put("id", cleanTrx)
                 put("trxId", cleanTrx)
@@ -1622,7 +1741,7 @@ class FirebaseRestClient {
                 put("status", "Pending")
                 put("credited", false)
                 put("date", dateStr)
-                put("timestamp", now)
+                put("timestamp", timestampMs)
             }
             putJson("transactions/${user.uid}/$cleanTrx", depositPayload, user.idToken)
 

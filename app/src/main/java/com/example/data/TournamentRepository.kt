@@ -10,13 +10,17 @@ import com.example.data.local.ParticipantEntity
 import com.example.data.local.TournamentDao
 import com.example.data.local.TransactionEntity
 import com.example.data.local.UserEntity
+import com.example.data.local.parseTransactionTimestamp
 import com.example.data.remote.FirebaseRestClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -61,15 +65,16 @@ class TournamentRepository(
     val leaderboardPlayers: StateFlow<List<LeaderboardPlayer>> = _leaderboardPlayers.asStateFlow()
 
     fun getTransactionsForUser(uid: String): Flow<List<TransactionEntity>> =
-        dao.getTransactionsForUser(uid)
-
-    suspend fun initializeAndSync() = withContext(Dispatchers.IO) {
-        // 1. Seed rich fallback tournament data locally if local DB is empty
-        if (dao.getAllCategories().first().isEmpty()) {
-            seedDefaultData()
+        dao.getTransactionsForUser(uid).map { list ->
+            list.sortedWith(
+                compareByDescending<TransactionEntity> { parseTransactionTimestamp(it) }
+                    .thenByDescending { it.timestamp }
+                    .thenByDescending { it.id }
+            )
         }
 
-        // 2. If a user is already logged in locally, ensure they are registered & synced in Firebase Auth + RTDB
+    suspend fun initializeAndSync() = withContext(Dispatchers.IO) {
+        // 1. If a user is already logged in locally, ensure they are synced with Firebase Auth + RTDB immediately
         val localUser = dao.getActiveUser().first()
         var activeToken: String? = null
         if (localUser != null) {
@@ -82,104 +87,115 @@ class TournamentRepository(
                 }
             }
             activeToken = syncedUser.idToken
-            val remoteTxs = remote.syncAndFetchUserTransactions(syncedUser)
-            if (remoteTxs.isNotEmpty()) {
-                val localTxs = dao.getTransactionsForUser(syncedUser.uid).first()
-                if (remoteTxs != localTxs) {
-                    dao.insertTransactions(remoteTxs)
-                }
-            }
         }
 
-        // 3. Seed Firebase Realtime Database (bd-tournament-3) if any root node is empty so Admin Panel has full structure
-        remote.seedInitialDatabaseIfNeeded(
-            defaultSettings = _appSettings.value,
-            defaultCategories = dao.getAllCategories().first(),
-            defaultMatches = dao.getAllMatches().first(),
-            defaultParticipants = dao.getAllParticipants().first(),
-            defaultNotifications = dao.getAllNotifications().first(),
-            authToken = activeToken
-        )
+        // 2. Pull latest data from Firebase Realtime Database first so Admin Panel changes reflect immediately on app start
+        syncLiveFromFirebase(forceWait = true)
 
-        // 4. Pull live data from Firebase Realtime Database
-        syncLiveFromFirebase()
+        // 3. Only if local DB is still empty (e.g., fresh database or offline), seed fallback data
+        if (dao.getAllCategories().first().isEmpty()) {
+            seedDefaultData()
+            remote.seedInitialDatabaseIfNeeded(
+                defaultSettings = _appSettings.value,
+                defaultCategories = dao.getAllCategories().first(),
+                defaultMatches = dao.getAllMatches().first(),
+                defaultParticipants = dao.getAllParticipants().first(),
+                defaultNotifications = dao.getAllNotifications().first(),
+                authToken = activeToken
+            )
+        }
     }
 
-    suspend fun syncLiveFromFirebase() = withContext(Dispatchers.IO) {
-        if (syncMutex.isLocked) return@withContext
+    suspend fun syncLiveFromFirebase(forceWait: Boolean = false) = withContext(Dispatchers.IO) {
+        if (!forceWait && syncMutex.isLocked) return@withContext
         syncMutex.withLock {
-            remote.fetchAppSettings()?.let { remoteSettings ->
-                if (_appSettings.value != remoteSettings) {
-                    _appSettings.value = remoteSettings
-                }
-            }
+            coroutineScope {
+                val curUser = dao.getActiveUser().first()
 
-            val remoteCats = remote.fetchCategories()
-            if (remoteCats.isNotEmpty()) {
-                val localCats = dao.getAllCategories().first()
-                if (remoteCats != localCats) {
-                    dao.replaceCategories(remoteCats)
+                val settingsDef = async { remote.fetchAppSettings() }
+                val catsDef = async { remote.fetchCategories() }
+                val matchesDef = async { remote.fetchMatches() }
+                val partsDef = async { remote.fetchParticipants() }
+                val notifsDef = async { remote.fetchNotifications() }
+                val txsDef = async {
+                    if (curUser != null) remote.syncAndFetchUserTransactions(curUser) else emptyList()
                 }
-            }
 
-            val remoteMatches = remote.fetchMatches()
-            val effectiveMatches = if (remoteMatches.isNotEmpty()) {
-                val localMatches = dao.getAllMatches().first()
-                if (remoteMatches != localMatches) {
-                    dao.replaceMatches(remoteMatches)
+                settingsDef.await()?.let { remoteSettings ->
+                    if (_appSettings.value != remoteSettings) {
+                        _appSettings.value = remoteSettings
+                    }
                 }
-                remoteMatches
-            } else {
-                dao.getAllMatches().first()
-            }
 
-            val remoteParts = remote.fetchParticipants()
-            val effectiveParts = if (remoteParts.isNotEmpty()) {
+                val remoteCats = catsDef.await()
+                if (remoteCats.isNotEmpty()) {
+                    val localCats = dao.getAllCategories().first()
+                    if (remoteCats != localCats) {
+                        dao.replaceCategories(remoteCats)
+                    }
+                }
+
+                val remoteMatches = matchesDef.await()
+                val effectiveMatches = if (remoteMatches.isNotEmpty()) {
+                    val sortedRemoteMatches = remoteMatches.sortedBy { it.timestamp }
+                    val localMatches = dao.getAllMatches().first()
+                    if (sortedRemoteMatches != localMatches) {
+                        dao.replaceMatches(sortedRemoteMatches)
+                    }
+                    sortedRemoteMatches
+                } else {
+                    dao.getAllMatches().first()
+                }
+
+                val remoteParts = partsDef.await()
                 val localParts = dao.getAllParticipants().first()
-                if (remoteParts != localParts) {
-                    dao.replaceParticipants(remoteParts)
-                }
-                remoteParts
-            } else {
-                dao.getAllParticipants().first()
-            }
-
-            val remoteNotifs = remote.fetchNotifications()
-            if (remoteNotifs.isNotEmpty()) {
-                val localNotifs = dao.getAllNotifications().first()
-                if (remoteNotifs != localNotifs) {
-                    dao.insertNotifications(remoteNotifs)
-                }
-            }
-
-            val remoteTop = remote.fetchLeaderboardPlayers(effectiveMatches, effectiveParts)
-            if (remoteTop.isNotEmpty() && _leaderboardPlayers.value != remoteTop) {
-                _leaderboardPlayers.value = remoteTop
-            }
-
-            // Sync active user's transactions (checking for newly Approved deposits or Rejected withdraws) & balance from Firebase
-            val curUser = dao.getActiveUser().first()
-            if (curUser != null) {
-                val remoteTxs = remote.syncAndFetchUserTransactions(curUser)
-                if (remoteTxs.isNotEmpty()) {
-                    val localTxs = dao.getTransactionsForUser(curUser.uid).first()
-                    if (remoteTxs != localTxs) {
-                        dao.insertTransactions(remoteTxs)
+                if (remoteParts.isNotEmpty() || remoteMatches.isNotEmpty()) {
+                    if (remoteParts != localParts) {
+                        dao.replaceParticipants(remoteParts)
                     }
                 }
-                val remoteUser = remote.fetchRemoteUser(curUser.uid, curUser.idToken)
-                if (remoteUser != null) {
-                    val updatedUser = curUser.copy(
-                        username = remoteUser.username.ifBlank { curUser.username },
-                        phone = remoteUser.phone.ifBlank { curUser.phone },
-                        deposit = remoteUser.deposit,
-                        winning = remoteUser.winning,
-                        promoCode = remoteUser.promoCode.ifBlank { curUser.promoCode },
-                        referredBy = remoteUser.referredBy.ifBlank { curUser.referredBy }
+                val effectiveParts = if (remoteParts.isNotEmpty() || remoteMatches.isNotEmpty()) remoteParts else localParts
+
+                val remoteNotifs = notifsDef.await()
+                if (remoteNotifs.isNotEmpty()) {
+                    val localNotifs = dao.getAllNotifications().first()
+                    if (remoteNotifs != localNotifs) {
+                        dao.replaceNotifications(remoteNotifs)
+                    }
+                }
+
+                val remoteTxs = txsDef.await()
+                if (curUser != null) {
+                    val sortedRemoteTxs = remoteTxs.sortedWith(
+                        compareByDescending<TransactionEntity> { parseTransactionTimestamp(it) }
+                            .thenByDescending { it.timestamp }
+                            .thenByDescending { it.id }
                     )
-                    if (updatedUser != curUser) {
-                        dao.insertUser(updatedUser)
+                    if (sortedRemoteTxs.isNotEmpty()) {
+                        val localTxs = dao.getTransactionsForUser(curUser.uid).first()
+                        if (sortedRemoteTxs != localTxs) {
+                            dao.replaceTransactionsForUser(curUser.uid, sortedRemoteTxs)
+                        }
                     }
+                    val remoteUser = remote.fetchRemoteUser(curUser.uid, curUser.idToken)
+                    if (remoteUser != null) {
+                        val updatedUser = curUser.copy(
+                            username = remoteUser.username.ifBlank { curUser.username },
+                            phone = remoteUser.phone.ifBlank { curUser.phone },
+                            deposit = remoteUser.deposit,
+                            winning = remoteUser.winning,
+                            promoCode = remoteUser.promoCode.ifBlank { curUser.promoCode },
+                            referredBy = remoteUser.referredBy.ifBlank { curUser.referredBy }
+                        )
+                        if (updatedUser != curUser) {
+                            dao.insertUser(updatedUser)
+                        }
+                    }
+                }
+
+                val remoteTop = remote.fetchLeaderboardPlayers(effectiveMatches, effectiveParts)
+                if (remoteTop.isNotEmpty() && _leaderboardPlayers.value != remoteTop) {
+                    _leaderboardPlayers.value = remoteTop
                 }
             }
         }
@@ -516,8 +532,8 @@ class TournamentRepository(
             2 -> "Duo"
             else -> "Solo"
         }
-        val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
-        val txKey = "JOIN${System.currentTimeMillis().toString().takeLast(6)}"
+        val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.ENGLISH)
+        val txKey = "JOIN${nowMs.toString().takeLast(8)}"
         val tx = TransactionEntity(
             id = txKey,
             uid = syncedUser.uid,
@@ -526,7 +542,8 @@ class TournamentRepository(
             method = "Wallet",
             status = "Success",
             txId = txKey,
-            date = df.format(Date())
+            date = df.format(Date(nowMs)),
+            timestamp = nowMs
         )
         dao.insertTransaction(tx)
 
@@ -562,8 +579,9 @@ class TournamentRepository(
                 else -> method
             }
 
-            val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
-            val dateStr = df.format(Date())
+            val nowMs = System.currentTimeMillis()
+            val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.ENGLISH)
+            val dateStr = df.format(Date(nowMs))
             val txKey = trxId.trim().uppercase()
             val cleanSender = senderNumber.trim()
 
@@ -573,6 +591,7 @@ class TournamentRepository(
                 senderNumber = cleanSender,
                 method = methodDisplay,
                 dateStr = dateStr,
+                timestampMs = nowMs,
                 user = syncedUser
             )
             if (res.isSuccess) {
@@ -586,7 +605,8 @@ class TournamentRepository(
                     method = methodDisplay,
                     status = "Pending",
                     txId = txKey,
-                    date = dateStr
+                    date = dateStr,
+                    timestamp = nowMs
                 )
                 dao.insertTransaction(tx)
                 Result.success(amount)
@@ -649,8 +669,9 @@ class TournamentRepository(
         val updatedUser = syncedUser.copy(deposit = d, winning = w)
         dao.insertUser(updatedUser)
 
-        val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.getDefault())
-        val txKey = "WD${System.currentTimeMillis().toString().takeLast(6)}"
+        val nowMs = System.currentTimeMillis()
+        val df = SimpleDateFormat("M/d/yyyy, h:mm:ss a", Locale.ENGLISH)
+        val txKey = "WD${nowMs.toString().takeLast(8)}"
         val tx = TransactionEntity(
             id = txKey,
             uid = syncedUser.uid,
@@ -660,7 +681,8 @@ class TournamentRepository(
             method = method,
             status = "Pending",
             txId = txKey,
-            date = df.format(Date())
+            date = df.format(Date(nowMs)),
+            timestamp = nowMs
         )
         dao.insertTransaction(tx)
 
